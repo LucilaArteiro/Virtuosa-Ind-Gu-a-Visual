@@ -12,6 +12,7 @@ export async function updateSession (request: NextRequest) {
         getAll () {
           return request.cookies.getAll()
         },
+
         setAll (cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => {
             request.cookies.set(name, value)
@@ -27,21 +28,26 @@ export async function updateSession (request: NextRequest) {
     }
   )
 
-  const {
-    data: { claims }
-  } = await supabase.auth.getClaims()
+  // Obtener los datos del token de forma segura para TypeScript.
+  const { data, error: claimsError } = await supabase.auth.getClaims()
+
+  const claims = claimsError ? null : data?.claims ?? null
 
   const ruta = request.nextUrl.pathname
+
   const esRutaAdmin = ruta === '/admin' || ruta.startsWith('/admin/')
+
   const esLogin = ruta === '/admin/login'
 
   async function redirigir (destino: string) {
     const url = request.nextUrl.clone()
+
     url.pathname = destino
     url.search = ''
 
     const respuesta = NextResponse.redirect(url)
 
+    // Conservar las cookies de autenticación.
     response.cookies.getAll().forEach(cookie => {
       respuesta.cookies.set(cookie)
     })
@@ -49,10 +55,12 @@ export async function updateSession (request: NextRequest) {
     return respuesta
   }
 
+  // Las demás rutas del sitio siguen funcionando normalmente.
   if (!esRutaAdmin) {
     return response
   }
 
+  // Si no hay una identidad autenticada, solicitar el inicio de sesión.
   if (!claims?.sub) {
     if (esLogin) {
       return response
@@ -61,6 +69,8 @@ export async function updateSession (request: NextRequest) {
     return redirigir('/admin/login')
   }
 
+  // Comprobar que el usuario autenticado esté autorizado
+  // para acceder al panel administrativo.
   const { data: administrador, error } = await supabase
     .from('admin_users')
     .select('user_id')
@@ -69,6 +79,7 @@ export async function updateSession (request: NextRequest) {
 
   if (error) {
     console.error('No se pudo verificar el acceso administrativo.')
+
     return redirigir('/')
   }
 
@@ -76,6 +87,7 @@ export async function updateSession (request: NextRequest) {
     return esLogin ? response : redirigir('/')
   }
 
+  // Si ya inició sesión como administrador, evitar mostrar el login.
   if (esLogin) {
     return redirigir('/admin')
   }
