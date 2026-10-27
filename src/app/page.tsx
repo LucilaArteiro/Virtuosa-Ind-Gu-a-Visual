@@ -1,7 +1,12 @@
 'use client'
 
-import { useState } from 'react'
-
+import Image from 'next/image'
+import { useEffect, useState } from 'react'
+import {
+  obtenerCatalogoPublicado,
+  type OpcionColor,
+  type ProductoTienda
+} from '@/lib/supabase/catalogo'
 const categorias = [
   'Remeras y musculosas',
   'Blusas y camisas',
@@ -17,111 +22,13 @@ const categorias = [
   'SALE'
 ]
 
-type OpcionColor = {
-  nombre: string
-  codigo: string
-}
-
-type Producto = {
-  id: number
-  nombre: string
-  categoria: string
-  precio: number
-  imagen: string
-  talles: string[]
-  colores: OpcionColor[]
-}
-
 type ItemCarrito = {
-  producto: Producto
+  producto: ProductoTienda
   cantidad: number
   talle: string
   color: OpcionColor
+  precioUnitario: number
 }
-
-const rosa: OpcionColor = { nombre: 'Rosa', codigo: '#e8a0b4' }
-const blanco: OpcionColor = { nombre: 'Blanco', codigo: '#ffffff' }
-const negro: OpcionColor = { nombre: 'Negro', codigo: '#202020' }
-const beige: OpcionColor = { nombre: 'Beige', codigo: '#d6c0a1' }
-const azul: OpcionColor = { nombre: 'Azul', codigo: '#456fba' }
-const celeste: OpcionColor = { nombre: 'Celeste', codigo: '#a5d5ee' }
-const marrón: OpcionColor = { nombre: 'marrón', codigo: '#895129' }
-const gris: OpcionColor = { nombre: 'gris', codigo: '#898989' }
-
-const productos: Producto[] = [
-  {
-    id: 1,
-    nombre: 'Remera de prueba',
-    categoria: 'Remeras y musculosas',
-    precio: 15000,
-    imagen: '',
-    talles: ['S', 'M', 'L'],
-    colores: [rosa, blanco, negro]
-  },
-  {
-    id: 2,
-    nombre: 'Blusa de prueba',
-    categoria: 'Blusas y camisas',
-    precio: 22000,
-    imagen: '',
-    talles: ['S', 'M', 'L'],
-    colores: [blanco, rosa, beige]
-  },
-  {
-    id: 3,
-    nombre: 'Jean de prueba',
-    categoria: 'Jeans',
-    precio: 35000,
-    imagen: '',
-    talles: ['38', '40', '42', '44'],
-    colores: [azul, celeste, negro, gris]
-  },
-  {
-    id: 4,
-    nombre: 'Vestido de prueba',
-    categoria: 'Vestidos',
-    precio: 28000,
-    imagen: '',
-    talles: ['S', 'M', 'L'],
-    colores: [negro, marrón, rosa]
-  },
-  {
-    id: 5,
-    nombre: 'Vestido de prueba',
-    categoria: 'Vestidos',
-    precio: 28000,
-    imagen: '',
-    talles: ['S', 'M', 'L'],
-    colores: [negro, marrón, rosa]
-  },
-  {
-    id: 6,
-    nombre: 'Vestido de prueba',
-    categoria: 'Vestidos',
-    precio: 28000,
-    imagen: '',
-    talles: ['S', 'M', 'L'],
-    colores: [negro, marrón, rosa]
-  },
-  {
-    id: 7,
-    nombre: 'Vestido de prueba',
-    categoria: 'Vestidos',
-    precio: 28000,
-    imagen: '',
-    talles: ['S', 'M', 'L'],
-    colores: [negro, marrón, rosa]
-  },
-  {
-    id: 8,
-    nombre: 'Vestido de prueba',
-    categoria: 'Vestidos',
-    precio: 28000,
-    imagen: '',
-    talles: ['S', 'M', 'L'],
-    colores: [negro, marrón, rosa]
-  }
-]
 
 function formatoPrecio (precio: number) {
   return `$${precio.toLocaleString('es-AR')}`
@@ -130,15 +37,61 @@ function formatoPrecio (precio: number) {
 export default function Home () {
   const [menuAbierto, setMenuAbierto] = useState(false)
   const [carritoAbierto, setCarritoAbierto] = useState(false)
+  const [productoAbierto, setProductoAbierto] = useState<ProductoTienda | null>(
+    null
+  )
+
   const [categoriaActiva, setCategoriaActiva] = useState('Todos los productos')
+
+  const [productos, setProductos] = useState<ProductoTienda[]>([])
+  const [cargandoCatalogo, setCargandoCatalogo] = useState(true)
+  const [errorCatalogo, setErrorCatalogo] = useState('')
+
   const [carrito, setCarrito] = useState<ItemCarrito[]>([])
   const [consultaCliente, setConsultaCliente] = useState('')
-  const [tallesElegidos, setTallesElegidos] = useState<Record<number, string>>(
+
+  const [tallesElegidos, setTallesElegidos] = useState<Record<string, string>>(
     {}
   )
+
   const [coloresElegidos, setColoresElegidos] = useState<
-    Record<number, string>
+    Record<string, string>
   >({})
+
+  // Cargar únicamente los productos publicados en Supabase.
+  useEffect(() => {
+    let activo = true
+
+    async function cargarCatalogo () {
+      try {
+        setErrorCatalogo('')
+
+        const catalogo = await obtenerCatalogoPublicado()
+
+        if (activo) {
+          setProductos(catalogo)
+        }
+      } catch (error) {
+        console.error('Error al cargar el catálogo:', error)
+
+        if (activo) {
+          setErrorCatalogo(
+            'No pudimos cargar las prendas. Revisá tu conexión e intentá nuevamente.'
+          )
+        }
+      } finally {
+        if (activo) {
+          setCargandoCatalogo(false)
+        }
+      }
+    }
+
+    void cargarCatalogo()
+
+    return () => {
+      activo = false
+    }
+  }, [])
 
   const productosFiltrados = productos.filter(
     producto =>
@@ -152,7 +105,7 @@ export default function Home () {
   )
 
   const totalCarrito = carrito.reduce(
-    (total, item) => total + item.producto.precio * item.cantidad,
+    (total, item) => total + item.precioUnitario * item.cantidad,
     0
   )
 
@@ -165,14 +118,50 @@ export default function Home () {
     })
   }
 
-  function agregarAlCarrito (producto: Producto) {
-    const talle = tallesElegidos[producto.id]
-    const nombreColor = coloresElegidos[producto.id]
-    const color = producto.colores.find(opcion => opcion.nombre === nombreColor)
+  function agregarAlCarrito (producto: ProductoTienda): boolean {
+    let talle = 'Único'
+    let color: OpcionColor = {
+      nombre: 'Único',
+      codigo: '#f5f0f1'
+    }
+    let precioUnitario = producto.precio
 
-    if (!talle || !color) {
-      alert('Elegí el talle y el color antes de agregar la prenda al carrito.')
-      return
+    // Los productos con variantes requieren elegir una combinación existente.
+    if (producto.variantes.length > 0) {
+      talle = tallesElegidos[producto.id] || ''
+      const nombreColor = coloresElegidos[producto.id] || ''
+
+      if (!talle || !nombreColor) {
+        alert(
+          'Elegí el talle y el color antes de agregar la prenda al carrito.'
+        )
+        return false
+      }
+
+      const variante = producto.variantes.find(
+        opcion => opcion.color === nombreColor && opcion.talle === talle
+      )
+
+      if (!variante) {
+        alert('Esa combinación de color y talle no está disponible.')
+        return false
+      }
+
+      if (variante.stock === 0) {
+        alert('Esta variante está agotada. Elegí otra combinación.')
+        return false
+      }
+
+      color = {
+        nombre: variante.color,
+        codigo:
+          variante.colorCodigo ||
+          producto.colores.find(opcion => opcion.nombre === variante.color)
+            ?.codigo ||
+          '#929292'
+      }
+
+      precioUnitario = variante.precio ?? producto.precio
     }
 
     setCarrito(actual => {
@@ -193,12 +182,23 @@ export default function Home () {
         )
       }
 
-      return [...actual, { producto, cantidad: 1, talle, color }]
+      return [
+        ...actual,
+        {
+          producto,
+          cantidad: 1,
+          talle,
+          color,
+          precioUnitario
+        }
+      ]
     })
+
+    return true
   }
 
   function cambiarCantidad (
-    id: number,
+    id: string,
     talle: string,
     colorNombre: string,
     cambio: number
@@ -216,7 +216,7 @@ export default function Home () {
     )
   }
 
-  function eliminarDelCarrito (id: number, talle: string, colorNombre: string) {
+  function eliminarDelCarrito (id: string, talle: string, colorNombre: string) {
     setCarrito(actual =>
       actual.filter(
         item =>
@@ -237,7 +237,7 @@ export default function Home () {
         `• ${item.producto.nombre} | Color: ${item.color.nombre} | Talle: ${
           item.talle
         } | Cantidad: ${item.cantidad} | Subtotal: ${formatoPrecio(
-          item.producto.precio * item.cantidad
+          item.precioUnitario * item.cantidad
         )}`
     )
 
@@ -254,14 +254,7 @@ export default function Home () {
       '¿Me confirman la disponibilidad, por favor?'
     ].join('\n')
 
-    // Reemplazar por el número real de la tienda, con código de país
-    // y sin el signo +, espacios ni guiones.
     const numeroWhatsApp = '543412701052'
-
-    if (!numeroWhatsApp) {
-      alert('Todavía falta configurar el número de WhatsApp de la tienda.')
-      return
-    }
 
     window.open(
       `https://wa.me/${numeroWhatsApp}?text=${encodeURIComponent(mensaje)}`,
@@ -284,26 +277,21 @@ export default function Home () {
           type='button'
           aria-label={menuAbierto ? 'Cerrar menú' : 'Abrir menú'}
           aria-expanded={menuAbierto}
-          onClick={() => {
-            console.log('TOQUE EN EL MENÚ')
-            setMenuAbierto(actual => !actual)
-          }}
+          onClick={() => setMenuAbierto(actual => !actual)}
         >
           {menuAbierto ? '✕' : '☰'}
         </button>
 
         <a className='marca' href='#inicio' aria-label='VIRTUOSA IND, inicio'>
-          <span className='logo'>
-            VIRTUOSA <span>IND.</span>
-          </span>
-          <span className='eslogan'>Vestida de fuerza y dignidad</span>
+          <Image
+            src='/logo-virtuosa-nuevo.png'
+            alt='Logo de VIRTUOSA'
+            width={1024}
+            height={1024}
+            priority
+            className='marca-logo-img'
+          />
         </a>
-
-        <nav className='navegacion' aria-label='Navegación principal'>
-          <a href='#inicio'>Inicio</a>
-          <a href='#productos'>Colección</a>
-          <a href='#contacto'>Contacto</a>
-        </nav>
 
         <button
           className='boton-carrito'
@@ -334,6 +322,7 @@ export default function Home () {
                 <span className='etiqueta-dorada'>VIRTUOSA IND.</span>
                 <h2>Explorá la tienda</h2>
               </div>
+
               <button
                 type='button'
                 className='cerrar-panel'
@@ -432,6 +421,7 @@ export default function Home () {
         <span className='separador-franja'>✦</span>
       </section>
 
+      {/* CATÁLOGO CONECTADO A SUPABASE */}
       <section className='productos' id='productos'>
         <div className='encabezado-productos'>
           <div>
@@ -455,130 +445,82 @@ export default function Home () {
           )}
         </div>
 
-        {productosFiltrados.length > 0 ? (
+        {cargandoCatalogo ? (
+          <div className='catalogo-vacio'>
+            <span className='etiqueta-dorada'>VIRTUOSA IND.</span>
+            <h3>Cargando nuestra colección...</h3>
+            <p>Estamos buscando las prendas disponibles.</p>
+          </div>
+        ) : errorCatalogo ? (
+          <div className='catalogo-vacio'>
+            <span className='etiqueta-dorada'>VIRTUOSA IND.</span>
+            <h3>No pudimos cargar la colección</h3>
+            <p>{errorCatalogo}</p>
+            <button
+              type='button'
+              className='boton-secundario'
+              onClick={() => window.location.reload()}
+            >
+              VOLVER A INTENTAR
+            </button>
+          </div>
+        ) : productosFiltrados.length > 0 ? (
           <div className='grilla-productos'>
-            {productosFiltrados.map(producto => {
-              const talleElegido = tallesElegidos[producto.id] || ''
-              const colorElegido = coloresElegidos[producto.id] || ''
-
-              const colorActivo = producto.colores.find(
-                color => color.nombre === colorElegido
-              )
-
-              return (
-                <article className='tarjeta-producto' key={producto.id}>
-                  <div
-                    className='foto-producto'
-                    style={
-                      !producto.imagen
-                        ? {
-                            background: `linear-gradient(145deg, ${producto.colores[0].codigo} 0%, #f5f0f1 100%)`
-                          }
-                        : undefined
-                    }
-                  >
-                    {producto.imagen ? (
-                      <img src={producto.imagen} alt={producto.nombre} />
-                    ) : (
-                      <div className='imagen-sin-foto'>
-                        <span className='texto-prenda-prueba'>
-                          V<span>.</span>I
-                        </span>
-                        <span>{producto.nombre}</span>
-                      </div>
-                    )}
-
-                    <span className='etiqueta-producto'>
-                      {producto.categoria}
-                    </span>
-                  </div>
-
-                  <div className='datos-producto'>
-                    <h3>{producto.nombre}</h3>
-                    <p className='precio-producto'>
-                      {formatoPrecio(producto.precio)}
-                    </p>
-
-                    <div className='selector-variante'>
-                      <span className='etiqueta-selector'>
-                        Color:{' '}
-                        <strong>{colorElegido || 'Elegí un color'}</strong>
+            {productosFiltrados.map(producto => (
+              <article className='tarjeta-producto' key={producto.id}>
+                <button
+                  type='button'
+                  className='foto-producto foto-producto-boton'
+                  aria-label={`Ver detalles de ${producto.nombre}`}
+                  onClick={() => setProductoAbierto(producto)}
+                  style={
+                    !producto.imagen
+                      ? {
+                          background: `linear-gradient(145deg, ${
+                            producto.colores[0]?.codigo || '#f4dce5'
+                          } 0%, #f5f0f1 100%)`
+                        }
+                      : undefined
+                  }
+                >
+                  {producto.imagen ? (
+                    <img src={producto.imagen} alt={producto.nombre} />
+                  ) : (
+                    <div className='imagen-sin-foto'>
+                      <span className='texto-prenda-prueba'>
+                        V<span>.</span>I
                       </span>
-
-                      <div className='opciones-colores'>
-                        {producto.colores.map(color => (
-                          <button
-                            key={color.nombre}
-                            type='button'
-                            className={`muestra-color ${
-                              colorElegido === color.nombre
-                                ? 'color-seleccionado'
-                                : ''
-                            }`}
-                            style={{ backgroundColor: color.codigo }}
-                            title={color.nombre}
-                            aria-label={`Elegir color ${color.nombre}`}
-                            aria-pressed={colorElegido === color.nombre}
-                            onClick={() =>
-                              setColoresElegidos(actual => ({
-                                ...actual,
-                                [producto.id]: color.nombre
-                              }))
-                            }
-                          />
-                        ))}
-                      </div>
+                      <span>{producto.nombre}</span>
                     </div>
+                  )}
+                </button>
 
-                    <div className='selector-variante'>
-                      <span className='etiqueta-selector'>
-                        Talle:{' '}
-                        <strong>{talleElegido || 'Elegí un talle'}</strong>
-                      </span>
-
-                      <div className='opciones-talles'>
-                        {producto.talles.map(talle => (
-                          <button
-                            key={talle}
-                            type='button'
-                            className={`opcion-talle ${
-                              talleElegido === talle ? 'talle-seleccionado' : ''
-                            }`}
-                            aria-pressed={talleElegido === talle}
-                            onClick={() =>
-                              setTallesElegidos(actual => ({
-                                ...actual,
-                                [producto.id]: talle
-                              }))
-                            }
-                          >
-                            {talle}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button
-                      className='boton-agregar'
-                      type='button'
-                      onClick={() => agregarAlCarrito(producto)}
-                    >
-                      AGREGAR AL CARRITO <span>＋</span>
-                    </button>
-                  </div>
-                </article>
-              )
-            })}
+                <div className='datos-producto'>
+                  <h3>{producto.nombre}</h3>
+                  <p className='precio-producto'>
+                    {formatoPrecio(producto.precio)}
+                  </p>
+                </div>
+              </article>
+            ))}
           </div>
         ) : (
           <div className='catalogo-vacio'>
             <div className='icono-catalogo'>♡</div>
-            <span className='etiqueta-dorada'>PRÓXIMAMENTE</span>
-            <h3>Tu próxima prenda favorita te espera</h3>
+            <span className='etiqueta-dorada'>
+              {productos.length === 0 ? 'PRÓXIMAMENTE' : 'COLECCIÓN'}
+            </span>
+            <h3>
+              {productos.length === 0
+                ? 'Tu próxima prenda favorita te espera'
+                : 'Todavía no hay prendas en esta categoría'}
+            </h3>
             <p>
-              Estamos preparando el catálogo. Pronto vas a encontrar fotos,
-              talles y precios de nuestras prendas.
+              {productos.length === 0
+                ? 'Estamos preparando el catálogo. Pronto vas a encontrar fotos, talles y precios de nuestras prendas.'
+                : 'Estamos preparando esta parte de la colección.'}
             </p>
+
             {categoriaActiva !== 'Todos los productos' && (
               <button
                 className='boton-secundario'
@@ -591,6 +533,229 @@ export default function Home () {
           </div>
         )}
       </section>
+
+      {/* DETALLES DE LA PRENDA */}
+      {productoAbierto && (
+        <div
+          className='fondo-detalle-producto'
+          onClick={() => setProductoAbierto(null)}
+        >
+          <section
+            className='detalle-producto-modal'
+            role='dialog'
+            aria-modal='true'
+            aria-labelledby='titulo-detalle-producto'
+            onClick={evento => evento.stopPropagation()}
+          >
+            <button
+              type='button'
+              className='cerrar-detalle-producto'
+              aria-label='Cerrar detalles'
+              onClick={() => setProductoAbierto(null)}
+            >
+              ✕
+            </button>
+
+            <div
+              className='detalle-producto-imagen'
+              style={
+                !productoAbierto.imagen
+                  ? {
+                      background: `linear-gradient(145deg, ${
+                        productoAbierto.colores[0]?.codigo || '#f4dce5'
+                      } 0%, #f5f0f1 100%)`
+                    }
+                  : undefined
+              }
+            >
+              {productoAbierto.imagen ? (
+                <img
+                  src={productoAbierto.imagen}
+                  alt={productoAbierto.nombre}
+                />
+              ) : (
+                <div className='imagen-sin-foto'>
+                  <span className='texto-prenda-prueba'>
+                    V<span>.</span>I
+                  </span>
+                  <span>{productoAbierto.nombre}</span>
+                </div>
+              )}
+            </div>
+
+            <div className='detalle-producto-contenido'>
+              <span className='etiqueta-dorada'>
+                {productoAbierto.categoria}
+              </span>
+
+              <h2 id='titulo-detalle-producto'>{productoAbierto.nombre}</h2>
+
+              <p className='precio-producto'>
+                {formatoPrecio(productoAbierto.precio)}
+              </p>
+
+              {productoAbierto.descripcion?.trim() && (
+                <div className='descripcion-detalle-producto'>
+                  <h3>Descripción</h3>
+                  <p>{productoAbierto.descripcion}</p>
+                </div>
+              )}
+
+              {productoAbierto.variantes.length > 0 && (
+                <>
+                  <div className='selector-variante'>
+                    <span className='etiqueta-selector'>
+                      Color:{' '}
+                      <strong>
+                        {coloresElegidos[productoAbierto.id] ||
+                          'Elegí un color'}
+                      </strong>
+                    </span>
+
+                    <div className='opciones-colores'>
+                      {productoAbierto.colores.map(color => {
+                        const variantesColor = productoAbierto.variantes.filter(
+                          variante => variante.color === color.nombre
+                        )
+
+                        const todasAgotadas =
+                          variantesColor.length > 0 &&
+                          variantesColor.every(variante => variante.stock === 0)
+
+                        return (
+                          <button
+                            key={color.nombre}
+                            type='button'
+                            className={`muestra-color ${
+                              coloresElegidos[productoAbierto.id] ===
+                              color.nombre
+                                ? 'color-seleccionado'
+                                : ''
+                            }`}
+                            style={{ backgroundColor: color.codigo }}
+                            title={
+                              todasAgotadas
+                                ? `${color.nombre} — agotado`
+                                : color.nombre
+                            }
+                            aria-label={`Elegir color ${color.nombre}${
+                              todasAgotadas ? ', agotado' : ''
+                            }`}
+                            aria-pressed={
+                              coloresElegidos[productoAbierto.id] ===
+                              color.nombre
+                            }
+                            onClick={() =>
+                              setColoresElegidos(actual => ({
+                                ...actual,
+                                [productoAbierto.id]: color.nombre
+                              }))
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  <div className='selector-variante'>
+                    <span className='etiqueta-selector'>
+                      Talle:{' '}
+                      <strong>
+                        {tallesElegidos[productoAbierto.id] || 'Elegí un talle'}
+                      </strong>
+                    </span>
+
+                    <div className='opciones-talles'>
+                      {productoAbierto.talles.map(talle => {
+                        const colorElegido = coloresElegidos[productoAbierto.id]
+
+                        const variante = productoAbierto.variantes.find(
+                          opcion =>
+                            opcion.talle === talle &&
+                            opcion.color === colorElegido
+                        )
+
+                        const agotado = variante?.stock === 0
+                        const combinacionInexistente =
+                          Boolean(colorElegido) && !variante
+
+                        return (
+                          <button
+                            key={talle}
+                            type='button'
+                            className={`opcion-talle ${
+                              tallesElegidos[productoAbierto.id] === talle
+                                ? 'talle-seleccionado'
+                                : ''
+                            }`}
+                            aria-pressed={
+                              tallesElegidos[productoAbierto.id] === talle
+                            }
+                            title={
+                              agotado
+                                ? 'Agotada'
+                                : combinacionInexistente
+                                ? 'Combinación no disponible'
+                                : `Talle ${talle}`
+                            }
+                            onClick={() =>
+                              setTallesElegidos(actual => ({
+                                ...actual,
+                                [productoAbierto.id]: talle
+                              }))
+                            }
+                          >
+                            {talle}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {coloresElegidos[productoAbierto.id] &&
+                      tallesElegidos[productoAbierto.id] &&
+                      (() => {
+                        const variante = productoAbierto.variantes.find(
+                          opcion =>
+                            opcion.color ===
+                              coloresElegidos[productoAbierto.id] &&
+                            opcion.talle === tallesElegidos[productoAbierto.id]
+                        )
+
+                        if (!variante) {
+                          return (
+                            <p className='detalle-variante-aviso'>
+                              Esta combinación no está disponible.
+                            </p>
+                          )
+                        }
+
+                        if (variante.stock === 0) {
+                          return (
+                            <p className='detalle-variante-aviso'>Agotada</p>
+                          )
+                        }
+
+                        return null
+                      })()}
+                  </div>
+                </>
+              )}
+
+              <button
+                className='boton-agregar'
+                type='button'
+                onClick={() => {
+                  if (agregarAlCarrito(productoAbierto)) {
+                    setProductoAbierto(null)
+                  }
+                }}
+              >
+                AGREGAR AL CARRITO <span>＋</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <section className='seccion-contacto' id='contacto'>
         <span className='etiqueta-dorada'>ESTAMOS PARA VOS</span>
@@ -649,9 +814,20 @@ export default function Home () {
       </section>
 
       <footer className='pie'>
-        <a className='logo logo-pie' href='#inicio'>
-          VIRTUOSA <span>IND.</span>
+        <a
+          className='logo logo-pie'
+          href='#inicio'
+          aria-label='VIRTUOSA IND, volver al inicio'
+        >
+          <Image
+            src='/logo-virtuosa-sin-fondo.png'
+            alt='Logo de VIRTUOSA'
+            width={550}
+            height={550}
+            className='logo-pie-img'
+          />
         </a>
+
         <p>Vestida de fuerza y dignidad · Sin temor al futuro</p>
         <small>© 2026 VIRTUOSA IND. Todos los derechos reservados.</small>
       </footer>
@@ -670,6 +846,7 @@ export default function Home () {
                 <span className='etiqueta-dorada'>TU SELECCIÓN</span>
                 <h2 id='titulo-carrito'>Mi carrito</h2>
               </div>
+
               <button
                 className='cerrar-panel'
                 type='button'
@@ -685,6 +862,7 @@ export default function Home () {
                 <span className='icono-catalogo'>♡</span>
                 <h3>Tu carrito está vacío</h3>
                 <p>Las prendas que elijas van a aparecer acá.</p>
+
                 <button
                   className='boton-principal'
                   type='button'
@@ -717,18 +895,22 @@ export default function Home () {
 
                       <div className='info-item-carrito'>
                         <h3>{item.producto.nombre}</h3>
-                        <p>Talle: {item.talle}</p>
-                        <p className='detalle-color-carrito'>
-                          Color:
-                          <span
-                            className='muestra-color mini-color'
-                            style={{ backgroundColor: item.color.codigo }}
-                            aria-label={item.color.nombre}
-                          />
-                          {item.color.nombre}
-                        </p>
+                        {item.talle !== 'Único' && <p>Talle: {item.talle}</p>}
+
+                        {item.color.nombre !== 'Único' && (
+                          <p className='detalle-color-carrito'>
+                            Color:
+                            <span
+                              className='muestra-color mini-color'
+                              style={{ backgroundColor: item.color.codigo }}
+                              aria-label={item.color.nombre}
+                            />
+                            {item.color.nombre}
+                          </p>
+                        )}
+
                         <strong>
-                          {formatoPrecio(item.producto.precio * item.cantidad)}
+                          {formatoPrecio(item.precioUnitario * item.cantidad)}
                         </strong>
 
                         <div className='acciones-cantidad'>
@@ -779,7 +961,24 @@ export default function Home () {
                               )
                             }
                           >
-                            🗑️
+                            <svg
+                              xmlns='http://www.w3.org/2000/svg'
+                              width='18'
+                              height='18'
+                              viewBox='0 0 24 24'
+                              fill='none'
+                              stroke='currentColor'
+                              strokeWidth='1.7'
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              aria-hidden='true'
+                            >
+                              <path d='M3 6h18' />
+                              <path d='M8 6V4h8v2' />
+                              <path d='m19 6-1 14H6L5 6' />
+                              <path d='M10 11v5' />
+                              <path d='M14 11v5' />
+                            </svg>
                           </button>
                         </div>
                       </div>
@@ -794,9 +993,10 @@ export default function Home () {
                   </div>
 
                   <p>
-                    El envío, la disponibilidad, y el total final se confirman
+                    El envío, la disponibilidad y el total final se confirman
                     por WhatsApp.
                   </p>
+
                   <div className='consulta-carrito'>
                     <label htmlFor='consulta-cliente'>
                       ¿Tenés alguna pregunta?
@@ -836,6 +1036,26 @@ export default function Home () {
           </aside>
         </div>
       )}
+
+      <a
+        href='https://wa.me/543412701052?text=%C2%A1Hola!%20Quiero%20hacer%20una%20consulta%20sobre%20VIRTUOSA%20IND.'
+        className='whatsapp-flotante'
+        target='_blank'
+        rel='noopener noreferrer'
+        aria-label='Consultar por WhatsApp'
+        title='Escribinos por WhatsApp'
+      >
+        <svg
+          xmlns='http://www.w3.org/2000/svg'
+          viewBox='0 0 24 24'
+          width='30'
+          height='30'
+          fill='currentColor'
+          aria-hidden='true'
+        >
+          <path d='M12 2a9.8 9.8 0 0 0-8.5 14.7L2 22l5.5-1.4A10 10 0 1 0 12 2Zm0 18a8 8 0 0 1-4.1-1.1l-.3-.2-3.2.8.9-3.1-.2-.3A8 8 0 1 1 12 20Zm4.4-6c-.2-.1-1.4-.7-1.6-.8-.2-.1-.4-.1-.5.1l-.7.9c-.1.2-.3.2-.5.1a6.5 6.5 0 0 1-1.9-1.2 7 7 0 0 1-1.3-1.6c-.1-.2 0-.4.1-.5l.4-.5.2-.4c.1-.2 0-.3 0-.5l-.7-1.7c-.2-.4-.4-.4-.5-.4h-.5c-.2 0-.4.1-.6.3-.2.2-.8.8-.8 1.9s.8 2.2.9 2.3a9 9 0 0 0 3.5 3.1c.5.2.9.4 1.2.4.5.2.9.1 1.2.1.4-.1 1.4-.6 1.6-1.1.2-.5.2-1 .1-1.1 0-.1-.2-.2-.4-.3Z' />
+        </svg>
+      </a>
     </main>
   )
 }

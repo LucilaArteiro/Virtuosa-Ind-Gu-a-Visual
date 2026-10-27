@@ -88,8 +88,9 @@ input:focus-visible {
 /* ENCABEZADO */
 
 .encabezado {
-  position: relative;
-  z-index: 20;
+  position: sticky;
+  top: 0;
+  z-index: 90;
   min-height: 100px;
   padding: 18px 5%;
   display: flex;
@@ -101,11 +102,18 @@ input:focus-visible {
 }
 
 .marca {
-  min-width: 210px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 220px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 7px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  text-align: center;
 }
 
 .logo {
@@ -124,20 +132,6 @@ input:focus-visible {
   text-align: center;
 }
 
-.eslogan {
-  color: var(--gris);
-  font-family: var(--font-montserrat);
-  font-size: 12px;
-  font-style: italic;
-  letter-spacing: 0.3px;
-}
-
-.navegacion {
-  display: flex;
-  align-items: center;
-  gap: 23px;
-}
-
 .navegacion a {
   padding: 9px 0;
   font-size: 12px;
@@ -149,9 +143,10 @@ input:focus-visible {
 }
 
 .boton-menu {
-  position: fixed;
-  top: 65px;
-  left: 24px;
+  position: absolute;
+  top: 50%;
+  left: 5%;
+  transform: translateY(-50%);
   z-index: 102;
   width: 36px;
   height: 36px;
@@ -159,7 +154,7 @@ input:focus-visible {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--dorado);
-  border-radius: 2px;
+  border-radius: 50%;
   background: var(--blanco);
   color: var(--negro);
   font-size: 20px;
@@ -179,6 +174,10 @@ input:focus-visible {
   color: var(--blanco);
   font-size: 12px;
   transition: background 0.2s, color 0.2s;
+  position: relative;
+  z-index: 21;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .boton-carrito:hover {
@@ -987,7 +986,7 @@ input:focus-visible {
   }
 
   .marca {
-    min-width: 185px;
+    min-width: 0;
   }
 
   .logo {
@@ -1028,16 +1027,25 @@ input:focus-visible {
   }
 
   .boton-menu {
-    top: 55px;
-    left: 10px;
+    top: 50%;
+    left: 3%;
     width: 32px;
     height: 32px;
+    transform: translateY(-50%);
     font-size: 18px;
   }
+
   .marca {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 150px;
     min-width: 0;
-    flex: 1;
+    display: flex;
+    flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 5px;
     text-align: center;
   }
@@ -1805,4 +1813,312 @@ button {
 
 .opciones-talles {
   gap: 6px;
+}
+/* TAMAÑO DEL LOGO VIRTUOSA IND */
+
+.marca-logo-img {
+  display: block;
+  width: 125px !important;
+  max-width: 125px;
+  height: auto !important;
+  object-fit: contain;
+}
+
+.logo-pie-img {
+  display: block;
+  width: 110px !important;
+  max-width: 100%;
+  height: auto !important;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
+@media (max-width: 760px) {
+  .marca-logo-img {
+    width: 90px !important;
+    max-width: 90px;
+  }
+
+  .logo-pie-img {
+    width: 90px !important;
+  }
+}
+/* BOTÓN FLOTANTE DE WHATSAPP */
+
+.whatsapp-flotante {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 80;
+  width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #25d366;
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.whatsapp-flotante:hover {
+  background: #1eae55;
+  transform: scale(1.08);
+}
+
+.whatsapp-flotante:focus-visible {
+  outline: 3px solid var(--dorado);
+  outline-offset: 4px;
+}
+
+@media (max-width: 760px) {
+  .whatsapp-flotante {
+    right: 15px;
+    bottom: 18px;
+    width: 54px;
+    height: 54px;
+  }
+
+  .whatsapp-flotante svg {
+    width: 27px;
+    height: 27px;
+  }
+}
+/* =========================================
+   TARJETAS DEL CATÁLOGO
+   ========================================= */
+
+.foto-producto-boton {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.foto-producto-boton:focus-visible {
+  outline: 2px solid var(--dorado);
+  outline-offset: 3px;
+}
+
+.foto-producto-boton img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* =========================================
+   FONDO DE LA VENTANA DE DETALLES
+   ========================================= */
+
+.fondo-detalle-producto {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+  background: rgb(23 20 23 / 68%);
+}
+
+/* =========================================
+   VENTANA DEL PRODUCTO
+   ========================================= */
+
+.detalle-producto-modal {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+  width: min(820px, 100%);
+  max-height: 90vh;
+  max-height: 90dvh;
+  padding: 28px;
+  overflow-y: auto;
+  border: 1px solid #eadfe3;
+  border-radius: 16px;
+  background: var(--blanco);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 25%);
+}
+
+/* Botón para cerrar */
+
+.cerrar-detalle-producto {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #e9dfe3;
+  border-radius: 50%;
+  background: var(--blanco);
+  color: var(--negro);
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.cerrar-detalle-producto:hover {
+  background: var(--negro);
+  color: var(--blanco);
+}
+
+/* Fotografía */
+
+.detalle-producto-imagen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background-color: var(--rosa-claro);
+}
+
+.detalle-producto-imagen > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detalle-producto-imagen .imagen-sin-foto {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  text-align: center;
+}
+
+/* Información y precio */
+
+.detalle-producto-contenido {
+  min-width: 0;
+  padding-top: 18px;
+}
+
+.detalle-producto-contenido h2 {
+  margin: 12px 0;
+  color: var(--negro);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(25px, 3vw, 34px);
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+.detalle-producto-contenido > .precio-producto {
+  margin: 0 0 24px;
+  color: var(--negro);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+/* Descripción opcional */
+
+.descripcion-detalle-producto {
+  margin: 0 0 22px;
+  color: var(--negro-suave);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.descripcion-detalle-producto h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.descripcion-detalle-producto p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Espaciado de los selectores */
+
+.detalle-producto-contenido .selector-variante {
+  margin-top: 20px;
+}
+
+.detalle-producto-contenido .opciones-colores,
+.detalle-producto-contenido .opciones-talles {
+  margin-top: 10px;
+}
+
+.detalle-producto-contenido .boton-agregar {
+  width: 100%;
+  margin-top: 26px;
+}
+
+/* =========================================
+   ADAPTACIÓN A CELULARES
+   ========================================= */
+
+@media (max-width: 640px) {
+  .fondo-detalle-producto {
+    align-items: center;
+    padding: 12px;
+  }
+
+  .detalle-producto-modal {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    width: 100%;
+    max-height: 94vh;
+    max-height: 94dvh;
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .cerrar-detalle-producto {
+    top: 10px;
+    right: 10px;
+  }
+
+  .detalle-producto-imagen {
+    width: 100%;
+    max-height: 34vh;
+    max-height: 34dvh;
+    aspect-ratio: 4 / 3;
+  }
+
+  .detalle-producto-contenido {
+    padding-top: 4px;
+  }
+
+  .detalle-producto-contenido h2 {
+    padding-right: 24px;
+    font-size: 27px;
+  }
+
+  .detalle-producto-contenido > .precio-producto {
+    margin-bottom: 18px;
+    font-size: 21px;
+  }
+
+  .detalle-producto-contenido .selector-variante {
+    margin-top: 18px;
+  }
+
+  .detalle-producto-contenido .boton-agregar {
+    margin-top: 22px;
+  }
 }

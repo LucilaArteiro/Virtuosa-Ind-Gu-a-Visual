@@ -1,443 +1,435 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+
 import './admin.css'
-import { obtenerProductos, guardarProductos } from '@/lib/almacenProductos'
-import type { Producto } from '@/lib/productos'
+
+import {
+  categorias,
+  type EstadoProducto,
+  type Producto,
+  type VarianteProducto
+} from '@/lib/productos'
+
+import {
+  obtenerProductosSupabase,
+  guardarProductoSupabase,
+  actualizarEstadoSupabase,
+  eliminarProductoSupabase
+} from '@/lib/supabase/productos'
 
 type Seccion = 'inicio' | 'productos' | 'agregar'
 
-type FotoPreview = {
+type VarianteFormulario = {
   id: string
-  nombre: string
-  url: string
+  color: string
+  codigoColor: string
+  talle: string
+  stock: string
+  precio: string
 }
 
-type ColorDisponible = {
+type ColorFormulario = {
   nombre: string
   codigo: string
 }
 
-type VariantePrenda = {
-  id: string
-  color: string
-  talle: string
-  stock: number
-  precio: string
+const varianteVacia = (): VarianteFormulario => ({
+  id: crypto.randomUUID(),
+  color: '',
+  codigoColor: '#c5a052',
+  talle: '',
+  stock: '0',
+  precio: ''
+})
+
+const precioValido = (valor: string): boolean => {
+  const numero = Number(valor)
+
+  return valor.trim() !== '' && Number.isFinite(numero) && numero >= 0
 }
 
-const COLORES_PREDEFINIDOS: ColorDisponible[] = [
-  { nombre: 'Negro', codigo: '#171417' },
-  { nombre: 'Blanco', codigo: '#FFFFFF' },
-  { nombre: 'Gris', codigo: '#929292' },
-  { nombre: 'Beige', codigo: '#D8B995' },
-  { nombre: 'Marrón', codigo: '#80543C' },
-  { nombre: 'Rosa', codigo: '#E99AB7' },
-  { nombre: 'Rojo', codigo: '#E52B38' },
-  { nombre: 'Bordó', codigo: '#800020' },
-  { nombre: 'Azul', codigo: '#2176D2' },
-  { nombre: 'Celeste', codigo: '#7CC5EE' },
-  { nombre: 'Verde', codigo: '#659B58' },
-  { nombre: 'Violeta', codigo: '#8A4BC0' },
-  { nombre: 'Amarillo', codigo: '#F5D13D' },
-  { nombre: 'Naranja', codigo: '#F28A32' }
-]
+const formatoPrecio = (precio: number): string =>
+  precio.toLocaleString('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    maximumFractionDigits: 2
+  })
+
+const textoEstado = (estado: EstadoProducto): string => {
+  if (estado === 'publicado') return 'Publicado'
+  if (estado === 'oculto') return 'Oculto'
+
+  return 'Borrador'
+}
+
+function obtenerCodigoColor (color: string): string {
+  const colores: Record<string, string> = {
+    negro: '#171417',
+    blanco: '#ffffff',
+    rosa: '#f4dce5',
+    beige: '#d9c5a0',
+    azul: '#244a78',
+    celeste: '#9bcbea',
+    marrón: '#76513d',
+    gris: '#999999',
+    rojo: '#b53636',
+    verde: '#397451'
+  }
+
+  return colores[color.toLocaleLowerCase()] ?? '#c5a052'
+}
 
 export default function AdminPage () {
-  const [fotosPreview, setFotosPreview] = useState<FotoPreview[]>([])
-  const fotosPreviewRef = useRef<FotoPreview[]>([])
-
-  const [seccionActiva, setSeccionActiva] = useState<Seccion>('inicio')
   const [productos, setProductos] = useState<Producto[]>([])
-  const [productoEditando, setProductoEditando] = useState<string | null>(null)
+  const [cargando, setCargando] = useState(true)
+
+  const [seccionActiva, setSeccionActiva] = useState<Seccion>('productos')
+
   const [menuAbierto, setMenuAbierto] = useState(false)
 
-  const [colores, setColores] =
-    useState<ColorDisponible[]>(COLORES_PREDEFINIDOS)
-  const [coloresSeleccionados, setColoresSeleccionados] = useState<string[]>([])
-  const [nombreColorNuevo, setNombreColorNuevo] = useState('')
-  const [codigoColorNuevo, setCodigoColorNuevo] = useState('#C5A052')
+  const [busqueda, setBusqueda] = useState('')
+  const [filtroCategoria, setFiltroCategoria] = useState('Todas')
+  const [filtroEstado, setFiltroEstado] = useState('Todos')
 
-  const [talles, setTalles] = useState<string[]>([])
-  const [nombreTalleNuevo, setNombreTalleNuevo] = useState('')
+  const [productoEditando, setProductoEditando] = useState<Producto | null>(
+    null
+  )
 
-  const [variantes, setVariantes] = useState<VariantePrenda[]>([])
-  const [colorVariante, setColorVariante] = useState('')
-  const [talleVariante, setTalleVariante] = useState('')
-  const [stockVariante, setStockVariante] = useState('0')
-  const [precioVariante, setPrecioVariante] = useState('')
+  const [nombre, setNombre] = useState('')
+  const [descripcion, setDescripcion] = useState('')
+  const [categoria, setCategoria] = useState<string>(categorias[0])
+  const [precio, setPrecio] = useState('')
+
+  const [estadoFormulario, setEstadoFormulario] =
+    useState<EstadoProducto>('borrador')
+
+  const [variantesFormulario, setVariantesFormulario] = useState<
+    VarianteFormulario[]
+  >([])
+
+  const [fotosGuardadas, setFotosGuardadas] = useState<string[]>([])
+  const [archivosFotos, setArchivosFotos] = useState<File[]>([])
+  const [previsualizaciones, setPrevisualizaciones] = useState<string[]>([])
+
+  const [guardando, setGuardando] = useState(false)
+  const [productoEnProceso, setProductoEnProceso] = useState<string | null>(
+    null
+  )
+
+  const [mensaje, setMensaje] = useState('')
+
+  async function cargarProductos () {
+    setCargando(true)
+
+    try {
+      const lista = await obtenerProductosSupabase()
+      setProductos(lista)
+    } catch (error) {
+      console.error('Error cargando los productos:', error)
+
+      setMensaje('No se pudieron cargar las prendas. Revisá la conexión.')
+    } finally {
+      setCargando(false)
+    }
+  }
 
   useEffect(() => {
-    setProductos(obtenerProductos())
+    void cargarProductos()
   }, [])
 
   useEffect(() => {
+    const urls = archivosFotos.map(archivo => URL.createObjectURL(archivo))
+
+    setPrevisualizaciones(urls)
+
     return () => {
-      fotosPreviewRef.current.forEach(foto => {
-        URL.revokeObjectURL(foto.url)
-      })
+      urls.forEach(url => URL.revokeObjectURL(url))
     }
-  }, [])
+  }, [archivosFotos])
 
-  const seleccionarFotografias = (
-    evento: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const archivos = Array.from(evento.target.files ?? []).filter(archivo =>
-      archivo.type.startsWith('image/')
-    )
+  const productosFiltrados = useMemo(() => {
+    const texto = busqueda.trim().toLocaleLowerCase()
 
-    fotosPreviewRef.current.forEach(foto => {
-      URL.revokeObjectURL(foto.url)
+    return productos.filter(producto => {
+      const coincideTexto =
+        !texto ||
+        producto.nombre.toLocaleLowerCase().includes(texto) ||
+        producto.descripcion.toLocaleLowerCase().includes(texto) ||
+        producto.categoria.toLocaleLowerCase().includes(texto)
+
+      const coincideCategoria =
+        filtroCategoria === 'Todas' || producto.categoria === filtroCategoria
+
+      const coincideEstado =
+        filtroEstado === 'Todos' || producto.estado === filtroEstado
+
+      return coincideTexto && coincideCategoria && coincideEstado
     })
+  }, [productos, busqueda, filtroCategoria, filtroEstado])
 
-    const nuevasFotos = archivos.map(archivo => ({
-      id: crypto.randomUUID(),
-      nombre: archivo.name,
-      url: URL.createObjectURL(archivo)
-    }))
+  const publicados = productos.filter(
+    producto => producto.estado === 'publicado'
+  ).length
 
-    fotosPreviewRef.current = nuevasFotos
-    setFotosPreview(nuevasFotos)
+  const borradores = productos.filter(
+    producto => producto.estado === 'borrador'
+  ).length
+
+  const ocultos = productos.filter(
+    producto => producto.estado === 'oculto'
+  ).length
+
+  function limpiarFormulario () {
+    setProductoEditando(null)
+    setNombre('')
+    setDescripcion('')
+    setCategoria(categorias[0])
+    setPrecio('')
+    setEstadoFormulario('borrador')
+    setVariantesFormulario([])
+    setFotosGuardadas([])
+    setArchivosFotos([])
+    setMensaje('')
   }
 
-  const quitarFotografia = (id: string) => {
-    const foto = fotosPreviewRef.current.find(item => item.id === id)
-
-    if (foto) {
-      URL.revokeObjectURL(foto.url)
-    }
-
-    const nuevasFotos = fotosPreviewRef.current.filter(item => item.id !== id)
-
-    fotosPreviewRef.current = nuevasFotos
-    setFotosPreview(nuevasFotos)
-  }
-
-  const alternarColor = (nombre: string) => {
-    setColoresSeleccionados(actual =>
-      actual.includes(nombre)
-        ? actual.filter(color => color !== nombre)
-        : [...actual, nombre]
-    )
-  }
-
-  const agregarColorPersonalizado = () => {
-    const nombre = nombreColorNuevo.trim()
-
-    if (!nombre) {
-      alert('Escribí el nombre del color.')
-      return
-    }
-
-    if (
-      colores.some(color => color.nombre.toLowerCase() === nombre.toLowerCase())
-    ) {
-      alert('Ese color ya está en la lista.')
-      return
-    }
-
-    setColores(actual => [...actual, { nombre, codigo: codigoColorNuevo }])
-    setColoresSeleccionados(actual => [...actual, nombre])
-    setNombreColorNuevo('')
-    setCodigoColorNuevo('#C5A052')
-  }
-
-  const agregarTalle = () => {
-    const nombre = nombreTalleNuevo.trim().toUpperCase()
-
-    if (!nombre) return
-
-    if (talles.some(talle => talle.toLowerCase() === nombre.toLowerCase())) {
-      alert('Ese talle ya está en la lista.')
-      return
-    }
-
-    setTalles(actual => [...actual, nombre])
-    setNombreTalleNuevo('')
-  }
-
-  const agregarVariante = () => {
-    if (!colorVariante || !talleVariante) {
-      alert('Elegí un color y un talle para agregar la variante.')
-      return
-    }
-
-    if (
-      variantes.some(
-        variante =>
-          variante.color === colorVariante && variante.talle === talleVariante
-      )
-    ) {
-      alert('Esa combinación de color y talle ya existe.')
-      return
-    }
-
-    const stock = Number(stockVariante)
-
-    if (!Number.isInteger(stock) || stock < 0) {
-      alert('El stock debe ser un número entero igual o mayor que cero.')
-      return
-    }
-
-    if (
-      precioVariante.trim() !== '' &&
-      (!Number.isFinite(Number(precioVariante)) || Number(precioVariante) <= 0)
-    ) {
-      alert('El precio personalizado debe ser mayor que cero.')
-      return
-    }
-
-    setVariantes(actual => [
-      ...actual,
-      {
-        id: crypto.randomUUID(),
-        color: colorVariante,
-        talle: talleVariante,
-        stock,
-        precio: precioVariante.trim()
-      }
-    ])
-
-    setStockVariante('0')
-    setPrecioVariante('')
-  }
-
-  const eliminarVariante = (id: string) => {
-    setVariantes(actual => actual.filter(variante => variante.id !== id))
-  }
-
-  const cambiarSeccion = (seccion: Seccion) => {
-    setSeccionActiva(seccion)
-    setMenuAbierto(false)
-  }
-
-  // Esta función ahora está fuera de cambiarSeccion.
-  // Por eso los botones de edición pueden acceder a ella.
-  const editarProducto = (producto: Producto) => {
-    setProductoEditando(producto.id)
+  function abrirFormularioNuevo () {
+    limpiarFormulario()
     setSeccionActiva('agregar')
     setMenuAbierto(false)
+  }
 
-    // Recuperar los colores y talles que ya se usan en las variantes.
-    const coloresDelProducto = [
-      ...new Set(producto.variantes.map(variante => variante.color))
-    ]
+  function editarProducto (producto: Producto) {
+    setProductoEditando(producto)
+    setNombre(producto.nombre)
+    setDescripcion(producto.descripcion)
+    setCategoria(producto.categoria)
+    setPrecio(String(producto.precio))
+    setEstadoFormulario(producto.estado)
+    setFotosGuardadas(producto.fotos ?? [])
+    setArchivosFotos([])
 
-    const tallesDelProducto = [
-      ...new Set(producto.variantes.map(variante => variante.talle))
-    ]
-
-    // Agregar a la lista los colores guardados que no estén predefinidos.
-    setColores(actual => {
-      const nuevosColores = coloresDelProducto
-        .filter(
-          nombre =>
-            !actual.some(
-              color => color.nombre.toLowerCase() === nombre.toLowerCase()
-            )
-        )
-        .map(nombre => ({
-          nombre,
-          codigo: '#929292'
-        }))
-
-      return [...actual, ...nuevosColores]
-    })
-
-    setColoresSeleccionados(coloresDelProducto)
-    setTalles(tallesDelProducto)
-
-    setVariantes(
-      producto.variantes.map(variante => ({
+    setVariantesFormulario(
+      (producto.variantes ?? []).map(variante => ({
         id: variante.id,
         color: variante.color,
+        codigoColor: obtenerCodigoColor(variante.color),
         talle: variante.talle,
-        stock: variante.stock,
-        precio: variante.precio !== undefined ? String(variante.precio) : ''
+        stock: String(variante.stock),
+        precio: variante.precio === undefined ? '' : String(variante.precio)
       }))
     )
 
-    setColorVariante('')
-    setTalleVariante('')
-    setStockVariante('0')
-    setPrecioVariante('')
+    setMensaje('')
+    setSeccionActiva('agregar')
+    setMenuAbierto(false)
 
-    // Los campos del formulario se completan después de mostrarlo.
-    window.setTimeout(() => {
-      const formulario = document.querySelector<HTMLFormElement>(
-        '.admin-producto-formulario'
-      )
-
-      if (!formulario) return
-
-      const nombre = formulario.elements.namedItem(
-        'nombre'
-      ) as HTMLInputElement | null
-
-      const categoria = formulario.elements.namedItem(
-        'categoria'
-      ) as HTMLSelectElement | null
-
-      const descripcion = formulario.elements.namedItem(
-        'descripcion'
-      ) as HTMLTextAreaElement | null
-
-      const precio = formulario.elements.namedItem(
-        'precio'
-      ) as HTMLInputElement | null
-
-      if (nombre) nombre.value = producto.nombre
-      if (categoria) categoria.value = producto.categoria
-      if (descripcion) descripcion.value = producto.descripcion
-      if (precio) precio.value = String(producto.precio)
-    }, 0)
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    })
   }
 
-  const guardarNuevaPrenda = (evento: React.FormEvent<HTMLFormElement>) => {
-    evento.preventDefault()
+  function agregarVariante () {
+    setVariantesFormulario(actuales => [...actuales, varianteVacia()])
+  }
 
-    const formulario = evento.currentTarget
-    const datos = new FormData(formulario)
+  function actualizarVariante (
+    id: string,
+    campo: keyof Omit<VarianteFormulario, 'id'>,
+    valor: string
+  ) {
+    setVariantesFormulario(actuales =>
+      actuales.map(variante =>
+        variante.id === id ? { ...variante, [campo]: valor } : variante
+      )
+    )
+  }
 
-    const nombre = String(datos.get('nombre') ?? '').trim()
-    const categoria = String(datos.get('categoria') ?? '')
-    const descripcion = String(datos.get('descripcion') ?? '').trim()
-    const precio = Number(datos.get('precio'))
+  function quitarVariante (id: string) {
+    setVariantesFormulario(actuales =>
+      actuales.filter(variante => variante.id !== id)
+    )
+  }
 
-    if (!nombre || !categoria || !Number.isFinite(precio) || precio <= 0) {
-      alert('Revisá el nombre, la categoría y el precio de la prenda.')
+  function seleccionarFotos (event: ChangeEvent<HTMLInputElement>) {
+    const nuevasFotos = Array.from(event.target.files ?? [])
+
+    if (nuevasFotos.length === 0) return
+
+    setArchivosFotos(actuales => [...actuales, ...nuevasFotos])
+
+    event.target.value = ''
+  }
+
+  function quitarFotoNueva (indice: number) {
+    setArchivosFotos(actuales => actuales.filter((_, i) => i !== indice))
+  }
+
+  function quitarFotoGuardada (url: string) {
+    setFotosGuardadas(actuales => actuales.filter(foto => foto !== url))
+  }
+
+  async function guardarFormulario (estadoSolicitado: EstadoProducto) {
+    setMensaje('')
+
+    if (!nombre.trim()) {
+      setMensaje('Escribí el nombre de la prenda.')
       return
     }
 
-    const variantesProducto = variantes.map(variante => ({
-      id: variante.id,
-      color: variante.color,
-      talle: variante.talle,
-      stock: variante.stock,
-      ...(variante.precio.trim() !== ''
-        ? { precio: Number(variante.precio) }
-        : {})
-    }))
+    if (!precioValido(precio)) {
+      setMensaje('Ingresá un precio válido, igual o mayor que cero.')
+      return
+    }
 
-    const fechaActual = new Date().toISOString()
-    const productosGuardados = obtenerProductos()
+    const variantes: VarianteProducto[] = variantesFormulario
+      .filter(variante => variante.color.trim() && variante.talle.trim())
+      .map(variante => {
+        const stockNumero = Number(variante.stock)
 
-    const productoAnterior = productoEditando
-      ? productosGuardados.find(item => item.id === productoEditando)
-      : undefined
+        const precioVariante = variante.precio.trim()
+          ? Number(variante.precio)
+          : undefined
 
-    const nuevaPrenda: Producto = {
-      id: productoEditando ?? crypto.randomUUID(),
-      nombre,
-      descripcion,
+        return {
+          id: variante.id,
+          color: variante.color.trim(),
+          talle: variante.talle.trim(),
+          stock:
+            Number.isFinite(stockNumero) && stockNumero >= 0
+              ? Math.floor(stockNumero)
+              : 0,
+          ...(precioVariante !== undefined &&
+          Number.isFinite(precioVariante) &&
+          precioVariante >= 0
+            ? { precio: precioVariante }
+            : {})
+        }
+      })
+
+    /*
+     * Tercer argumento obligatorio de guardarProductoSupabase:
+     * una lista de colores únicos con su código visual.
+     */
+    const coloresMap = new Map<string, ColorFormulario>()
+
+    variantesFormulario.forEach(variante => {
+      const nombreColor = variante.color.trim()
+
+      if (!nombreColor) return
+
+      const clave = nombreColor.toLocaleLowerCase()
+
+      if (!coloresMap.has(clave)) {
+        coloresMap.set(clave, {
+          nombre: nombreColor,
+          codigo: variante.codigoColor
+        })
+      }
+    })
+
+    const colores = Array.from(coloresMap.values())
+
+    const ahora = new Date().toISOString()
+
+    const producto: Producto = {
+      id: productoEditando?.id ?? crypto.randomUUID(),
+      nombre: nombre.trim(),
+      descripcion: descripcion.trim(),
       categoria,
-      precio,
-      fotos: productoAnterior?.fotos ?? [],
-      variantes: variantesProducto,
-      estado: productoAnterior?.estado ?? 'borrador',
-      creadoEn: productoAnterior?.creadoEn ?? fechaActual,
-      actualizadoEn: fechaActual
+      precio: Number(precio),
+      fotos: fotosGuardadas,
+      variantes,
+      estado: estadoSolicitado,
+      creadoEn: productoEditando?.creadoEn ?? ahora,
+      actualizadoEn: ahora
     }
 
-    const productosActualizados = productoEditando
-      ? productosGuardados.map(producto =>
-          producto.id === productoEditando ? nuevaPrenda : producto
-        )
-      : [...productosGuardados, nuevaPrenda]
+    setGuardando(true)
 
-    const guardado = guardarProductos(productosActualizados)
+    try {
+      // CORREGIDO: se pasan los tres argumentos requeridos.
+      await guardarProductoSupabase(producto, archivosFotos, colores)
 
-    if (!guardado) {
-      alert(
-        'No se pudo guardar la prenda. Revisá el espacio disponible del navegador.'
+      await cargarProductos()
+
+      limpiarFormulario()
+      setSeccionActiva('productos')
+
+      setMensaje(
+        estadoSolicitado === 'publicado'
+          ? 'La prenda se guardó y quedó publicada.'
+          : estadoSolicitado === 'oculto'
+          ? 'La prenda se guardó como oculta.'
+          : 'La prenda se guardó como borrador.'
       )
-      return
+    } catch (error) {
+      console.error('Error guardando la prenda:', error)
+
+      setMensaje(
+        'No se pudo guardar la prenda. Revisá la conexión e intentá nuevamente.'
+      )
+    } finally {
+      setGuardando(false)
     }
-
-    setProductos(productosActualizados)
-    setProductoEditando(null)
-
-    alert(
-      productoEditando
-        ? '¡Cambios guardados correctamente!'
-        : '¡Prenda guardada! Se almacenó como borrador.'
-    )
-
-    formulario.reset()
-    setVariantes([])
-    setColoresSeleccionados([])
-    setTalles([])
-    setColorVariante('')
-    setTalleVariante('')
-    setStockVariante('0')
-    setPrecioVariante('')
-    setNombreColorNuevo('')
-    setCodigoColorNuevo('#C5A052')
-    setNombreTalleNuevo('')
-
-    fotosPreviewRef.current.forEach(foto => {
-      URL.revokeObjectURL(foto.url)
-    })
-
-    fotosPreviewRef.current = []
-    setFotosPreview([])
-    setSeccionActiva('productos')
   }
 
-  const cancelarEdicion = () => {
-    const formulario = document.querySelector<HTMLFormElement>(
-      '.admin-producto-formulario'
-    )
-
-    formulario?.reset()
-
-    setProductoEditando(null)
-    setVariantes([])
-    setColoresSeleccionados([])
-    setTalles([])
-    setColorVariante('')
-    setTalleVariante('')
-    setStockVariante('0')
-    setPrecioVariante('')
-    setNombreColorNuevo('')
-    setCodigoColorNuevo('#C5A052')
-    setNombreTalleNuevo('')
-
-    fotosPreviewRef.current.forEach(foto => {
-      URL.revokeObjectURL(foto.url)
-    })
-
-    fotosPreviewRef.current = []
-    setFotosPreview([])
-    cambiarSeccion('productos')
-  }
-
-  const cambiarEstadoProducto = (
+  async function cambiarEstadoProducto (
     producto: Producto,
-    nuevoEstado: 'borrador' | 'publicado'
-  ) => {
-    const productosActualizados = productos.map(item =>
-      item.id === producto.id
-        ? {
-            ...item,
-            estado: nuevoEstado,
-            actualizadoEn: new Date().toISOString()
-          }
-        : item
-    )
+    nuevoEstado: EstadoProducto
+  ) {
+    setMensaje('')
+    setProductoEnProceso(producto.id)
 
-    if (!guardarProductos(productosActualizados)) {
-      alert('No se pudo guardar el cambio.')
-      return
+    try {
+      await actualizarEstadoSupabase(producto.id, nuevoEstado)
+
+      await cargarProductos()
+
+      setMensaje(
+        `“${producto.nombre}” ahora está en estado: ${textoEstado(
+          nuevoEstado
+        ).toLocaleLowerCase()}.`
+      )
+    } catch (error) {
+      console.error('Error cambiando el estado:', error)
+
+      setMensaje('No se pudo actualizar el estado de la prenda.')
+    } finally {
+      setProductoEnProceso(null)
     }
+  }
 
-    setProductos(productosActualizados)
-
-    alert(
-      nuevoEstado === 'publicado'
-        ? 'La prenda quedó marcada como publicada. Todavía falta conectarla con la tienda visible para los clientes.'
-        : 'La prenda volvió a borradores.'
+  async function eliminarPrenda (producto: Producto) {
+    const confirmar = window.confirm(
+      `¿Querés eliminar definitivamente “${producto.nombre}”?\n\nSe eliminará de la tienda y del catálogo administrativo. Esta acción no se puede deshacer.`
     )
+
+    if (!confirmar) return
+
+    setMensaje('')
+    setProductoEnProceso(producto.id)
+
+    try {
+      await eliminarProductoSupabase(producto.id)
+      await cargarProductos()
+
+      if (productoEditando?.id === producto.id) {
+        limpiarFormulario()
+        setSeccionActiva('productos')
+      }
+
+      setMensaje(`La prenda “${producto.nombre}” fue eliminada.`)
+    } catch (error) {
+      console.error('Error eliminando la prenda:', error)
+
+      setMensaje(
+        'No se pudo eliminar la prenda. Revisá la conexión e intentá nuevamente.'
+      )
+    } finally {
+      setProductoEnProceso(null)
+    }
   }
 
   return (
@@ -448,54 +440,49 @@ export default function AdminPage () {
         }`}
       >
         <div className='admin-marca'>
-          <div className='admin-logo'>V.I</div>
-          <div>
-            <p>VIRTUOSA IND</p>
-            <small>Panel administrativo</small>
-          </div>
+          <span>V.I</span>
+          <p>VIRTUOSA IND</p>
+          <small>Panel administrativo</small>
         </div>
 
-        <nav className='admin-nav'>
-          <span className='admin-nav-titulo'>MENÚ PRINCIPAL</span>
-
+        <nav className='admin-navegacion'>
           <button
             type='button'
             className={seccionActiva === 'inicio' ? 'activo' : ''}
-            onClick={() => cambiarSeccion('inicio')}
+            onClick={() => {
+              setSeccionActiva('inicio')
+              setMenuAbierto(false)
+            }}
           >
-            <span>⌂</span>
             Inicio
           </button>
 
           <button
             type='button'
             className={seccionActiva === 'productos' ? 'activo' : ''}
-            onClick={() => cambiarSeccion('productos')}
+            onClick={() => {
+              setSeccionActiva('productos')
+              setMenuAbierto(false)
+              void cargarProductos()
+            }}
           >
-            <span>▤</span>
             Productos
           </button>
 
           <button
             type='button'
             className={seccionActiva === 'agregar' ? 'activo' : ''}
-            onClick={() => {
-              setProductoEditando(null)
-              cambiarSeccion('agregar')
-            }}
+            onClick={abrirFormularioNuevo}
           >
-            <span>＋</span>
-            Agregar prenda
+            + Agregar prenda
           </button>
-
-          <a href='/' className='admin-volver'>
-            <span>↗</span>
-            Ver tienda
-          </a>
         </nav>
 
         <div className='admin-sidebar-pie'>
-          <span>VIRTUOSA IND</span>
+          <a href='/' target='_blank' rel='noreferrer'>
+            Ver tienda ↗
+          </a>
+
           <small>Vestida de fuerza y dignidad</small>
         </div>
       </aside>
@@ -503,712 +490,656 @@ export default function AdminPage () {
       {menuAbierto && (
         <button
           type='button'
-          className='admin-fondo-menu'
+          className='admin-overlay'
           aria-label='Cerrar menú'
           onClick={() => setMenuAbierto(false)}
         />
       )}
 
-      <section className='admin-principal'>
+      <section className='admin-contenido'>
         <header className='admin-header'>
           <button
             type='button'
             className='admin-menu-toggle'
             aria-label={menuAbierto ? 'Cerrar menú' : 'Abrir menú'}
-            aria-expanded={menuAbierto}
-            onClick={() => {
-              alert('El botón recibió el toque')
-              setMenuAbierto(!menuAbierto)
-            }}
+            onClick={() => setMenuAbierto(abierto => !abierto)}
           >
-            {menuAbierto ? '✕' : '☰'}
+            {menuAbierto ? '×' : '☰'}
           </button>
 
-          <div className='admin-header-titulo'>
-            <span>VIRTUOSA IND / ADMINISTRACIÓN</span>
+          <div>
+            <p className='admin-header-etiqueta'>VIRTUOSA IND</p>
+
             <h1>
               {seccionActiva === 'inicio'
                 ? 'Inicio'
                 : seccionActiva === 'productos'
                 ? 'Productos'
                 : productoEditando
-                ? 'Editar una prenda'
+                ? 'Editar prenda'
                 : 'Agregar una prenda'}
             </h1>
           </div>
 
-          <div className='admin-perfil'>
-            <span className='admin-perfil-icono'>V</span>
-            <div>
-              <strong>Administradora</strong>
-              <small>Panel privado</small>
-            </div>
-          </div>
+          <span className='admin-usuario'>Administradora</span>
         </header>
 
-        <div className='admin-contenido'>
-          {seccionActiva === 'inicio' && (
-            <div className='admin-inicio'>
-              <div className='admin-bienvenida'>
-                <span className='admin-etiqueta'>TU ESPACIO DE TRABAJO</span>
+        {mensaje && (
+          <div className='admin-mensaje' role='status'>
+            <span>{mensaje}</span>
 
-                <h2>Bienvenida a tu tienda.</h2>
+            <button
+              type='button'
+              aria-label='Cerrar mensaje'
+              onClick={() => setMensaje('')}
+            >
+              ×
+            </button>
+          </div>
+        )}
 
-                <p>
-                  Desde acá vas a poder administrar tus prendas, actualizar
-                  precios y organizar tu catálogo.
-                </p>
+        {seccionActiva === 'inicio' && (
+          <div className='admin-inicio'>
+            <section className='admin-bienvenida'>
+              <p className='admin-eyebrow'>PANEL DE CONTROL</p>
+
+              <h2>Tu tienda, organizada en un solo lugar.</h2>
+
+              <p>
+                Administrá las prendas, revisá su estado y actualizá el catálogo
+                de VIRTUOSA IND.
+              </p>
+
+              <button
+                type='button'
+                className='admin-boton-principal'
+                onClick={abrirFormularioNuevo}
+              >
+                + Agregar una prenda
+              </button>
+            </section>
+
+            <div className='admin-resumen'>
+              <article>
+                <span>Total de prendas</span>
+                <strong>{productos.length}</strong>
+              </article>
+
+              <article>
+                <span>Publicadas</span>
+                <strong>{publicados}</strong>
+              </article>
+
+              <article>
+                <span>Borradores</span>
+                <strong>{borradores}</strong>
+              </article>
+
+              <article>
+                <span>Ocultas</span>
+                <strong>{ocultos}</strong>
+              </article>
+            </div>
+
+            <button
+              type='button'
+              className='admin-boton-secundario'
+              onClick={() => setSeccionActiva('productos')}
+            >
+              Ver catálogo administrativo →
+            </button>
+          </div>
+        )}
+
+        {seccionActiva === 'productos' && (
+          <section className='admin-listado'>
+            <div className='admin-listado-titulo'>
+              <div>
+                <p className='admin-eyebrow'>CATÁLOGO ADMINISTRATIVO</p>
+
+                <h2>Todas las prendas</h2>
+
+                <p>Editá, publicá, ocultá o eliminá productos del catálogo.</p>
+              </div>
+
+              <button
+                type='button'
+                className='admin-boton-principal'
+                onClick={abrirFormularioNuevo}
+              >
+                + Agregar prenda
+              </button>
+            </div>
+
+            <div className='admin-filtros'>
+              <label>
+                <span>Buscar</span>
+
+                <input
+                  type='search'
+                  placeholder='Nombre, descripción o categoría'
+                  value={busqueda}
+                  onChange={event => setBusqueda(event.target.value)}
+                />
+              </label>
+
+              <label>
+                <span>Categoría</span>
+
+                <select
+                  value={filtroCategoria}
+                  onChange={event => setFiltroCategoria(event.target.value)}
+                >
+                  <option value='Todas'>Todas las categorías</option>
+
+                  {categorias.map(nombreCategoria => (
+                    <option key={nombreCategoria} value={nombreCategoria}>
+                      {nombreCategoria}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                <span>Estado</span>
+
+                <select
+                  value={filtroEstado}
+                  onChange={event => setFiltroEstado(event.target.value)}
+                >
+                  <option value='Todos'>Todos los estados</option>
+                  <option value='publicado'>Publicados</option>
+                  <option value='borrador'>Borradores</option>
+                  <option value='oculto'>Ocultos</option>
+                </select>
+              </label>
+            </div>
+
+            {cargando ? (
+              <p className='admin-estado-vacio'>Cargando prendas…</p>
+            ) : productosFiltrados.length === 0 ? (
+              <div className='admin-estado-vacio'>
+                <span>◇</span>
+                <h3>No encontramos prendas</h3>
+
+                <p>Probá con otra búsqueda o agregá una prenda al catálogo.</p>
 
                 <button
                   type='button'
-                  className='admin-boton-principal'
-                  onClick={() => {
-                    setProductoEditando(null)
-                    cambiarSeccion('agregar')
-                  }}
+                  className='admin-boton-secundario'
+                  onClick={abrirFormularioNuevo}
                 >
-                  ＋ Agregar una prenda
+                  + Agregar prenda
                 </button>
               </div>
-
-              <div className='admin-tarjetas-resumen'>
-                <article className='admin-tarjeta'>
-                  <span>CATÁLOGO</span>
-                  <strong>Productos</strong>
-                  <p>Administrá las prendas de tu tienda.</p>
-
-                  <button
-                    type='button'
-                    onClick={() => cambiarSeccion('productos')}
-                  >
-                    Ver productos →
-                  </button>
-                </article>
-
-                <article className='admin-tarjeta'>
-                  <span>NUEVO PRODUCTO</span>
-                  <strong>Agregar prenda</strong>
-                  <p>Cargá fotos, precios, colores y talles.</p>
-
-                  <button
-                    type='button'
-                    onClick={() => {
-                      setProductoEditando(null)
-                      cambiarSeccion('agregar')
-                    }}
-                  >
-                    Comenzar →
-                  </button>
-                </article>
-              </div>
-            </div>
-          )}
-
-          {seccionActiva === 'productos' && (
-            <div className='admin-panel-seccion'>
-              <span className='admin-etiqueta'>TU CATÁLOGO</span>
-              <h2>Productos</h2>
-
-              <p>
-                Administrá tus prendas y elegí cuáles querés mostrar en la
-                tienda.
-              </p>
-
-              <div className='admin-tarjetas-resumen'>
-                <article className='admin-tarjeta'>
-                  <span>PRENDAS GUARDADAS</span>
-                  <strong>{productos.length}</strong>
-                  <p>Total de productos registrados.</p>
-                </article>
-
-                <article className='admin-tarjeta'>
-                  <span>BORRADORES</span>
-                  <strong>
-                    {
-                      productos.filter(
-                        producto => producto.estado === 'borrador'
-                      ).length
-                    }
-                  </strong>
-                  <p>Prendas que todavía no están publicadas.</p>
-                </article>
-
-                <article className='admin-tarjeta'>
-                  <span>PUBLICADAS</span>
-                  <strong>
-                    {
-                      productos.filter(
-                        producto => producto.estado === 'publicado'
-                      ).length
-                    }
-                  </strong>
-                  <p>Prendas marcadas como publicadas.</p>
-                </article>
-              </div>
-
-              {productos.length === 0 ? (
-                <div className='admin-vacio'>
-                  <span>▤</span>
-                  <h3>Todavía no hay prendas guardadas</h3>
-                  <p>Agregá una prenda para que aparezca en este catálogo.</p>
-
-                  <button
-                    type='button'
-                    className='admin-boton-principal'
-                    onClick={() => {
-                      setProductoEditando(null)
-                      cambiarSeccion('agregar')
-                    }}
-                  >
-                    ＋ Agregar primera prenda
-                  </button>
-                </div>
-              ) : (
-                <div className='admin-lista-productos'>
-                  {productos.map(producto => {
-                    const coloresProducto = [
-                      ...new Set(
-                        producto.variantes.map(variante => variante.color)
-                      )
-                    ]
-
-                    const tallesProducto = [
-                      ...new Set(
-                        producto.variantes.map(variante => variante.talle)
-                      )
-                    ]
-
-                    const agotado =
-                      producto.variantes.length > 0 &&
-                      producto.variantes.every(variante => variante.stock === 0)
-
-                    return (
-                      <article
-                        className='admin-tarjeta admin-producto-guardado'
-                        key={producto.id}
-                      >
-                        <span>{producto.categoria}</span>
-
-                        <h3>{producto.nombre}</h3>
-
-                        <p>{producto.descripcion || 'Sin descripción.'}</p>
-
-                        <p>
-                          <strong>
-                            ${producto.precio.toLocaleString('es-AR')}
-                          </strong>
-                        </p>
-
-                        <p>Variantes: {producto.variantes.length}</p>
-
-                        <div className='admin-producto-detalles'>
-                          <p>
-                            <strong>Colores:</strong>{' '}
-                            {coloresProducto.length > 0
-                              ? coloresProducto.join(', ')
-                              : 'Sin colores cargados'}
-                          </p>
-
-                          <p>
-                            <strong>Talles:</strong>{' '}
-                            {tallesProducto.length > 0
-                              ? tallesProducto.join(', ')
-                              : 'Sin talles cargados'}
-                          </p>
+            ) : (
+              <div className='admin-productos-grid'>
+                {productosFiltrados.map(producto => (
+                  <article className='admin-producto-card' key={producto.id}>
+                    <div className='admin-producto-foto'>
+                      {producto.fotos?.[0] ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={producto.fotos[0]} alt={producto.nombre} />
+                      ) : (
+                        <div className='admin-sin-foto'>
+                          <span>◇</span>
+                          <small>Sin fotografía</small>
                         </div>
+                      )}
 
-                        {agotado && (
-                          <p className='admin-producto-agotado'>
-                            Agotada · Todas las variantes tienen stock cero
-                          </p>
-                        )}
+                      <span
+                        className={`admin-estado admin-estado-${producto.estado}`}
+                      >
+                        {textoEstado(producto.estado)}
+                      </span>
+                    </div>
 
-                        <p>
-                          <button
-                            type='button'
-                            className='admin-boton-secundario'
-                            onClick={() => editarProducto(producto)}
-                          >
-                            ✎ Editar prenda
-                          </button>
-                        </p>
+                    <div className='admin-producto-info'>
+                      <p className='admin-producto-categoria'>
+                        {producto.categoria}
+                      </p>
 
-                        <p>
-                          Estado:{' '}
-                          <strong>
-                            {producto.estado === 'publicado'
-                              ? 'Publicado'
-                              : producto.estado === 'oculto'
-                              ? 'Oculto'
-                              : 'Borrador'}
-                          </strong>
-                        </p>
+                      <h3>{producto.nombre}</h3>
+
+                      <strong className='admin-producto-precio'>
+                        {formatoPrecio(producto.precio)}
+                      </strong>
+
+                      <p className='admin-producto-variantes'>
+                        {(producto.variantes ?? []).length} variantes
+                      </p>
+
+                      <div className='admin-producto-acciones'>
+                        <button
+                          type='button'
+                          className='admin-boton-secundario'
+                          onClick={() => editarProducto(producto)}
+                        >
+                          ✎ Editar prenda
+                        </button>
 
                         {producto.estado === 'publicado' ? (
-                          <button
-                            type='button'
-                            className='admin-boton-secundario'
-                            onClick={() =>
-                              cambiarEstadoProducto(producto, 'borrador')
-                            }
-                          >
-                            Volver a borrador
-                          </button>
+                          <>
+                            <button
+                              type='button'
+                              className='admin-boton-secundario'
+                              disabled={productoEnProceso === producto.id}
+                              onClick={() =>
+                                void cambiarEstadoProducto(producto, 'oculto')
+                              }
+                            >
+                              {productoEnProceso === producto.id
+                                ? 'Actualizando…'
+                                : 'Ocultar en la tienda'}
+                            </button>
+
+                            <button
+                              type='button'
+                              className='admin-boton-secundario'
+                              disabled={productoEnProceso === producto.id}
+                              onClick={() =>
+                                void cambiarEstadoProducto(producto, 'borrador')
+                              }
+                            >
+                              Volver a borrador
+                            </button>
+                          </>
                         ) : (
                           <button
                             type='button'
                             className='admin-boton-principal'
+                            disabled={productoEnProceso === producto.id}
                             onClick={() =>
-                              cambiarEstadoProducto(producto, 'publicado')
+                              void cambiarEstadoProducto(producto, 'publicado')
                             }
                           >
-                            ↑ Publicar en la tienda
+                            {productoEnProceso === producto.id
+                              ? 'Publicando…'
+                              : '↑ Publicar en la tienda'}
                           </button>
                         )}
-                      </article>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
 
-          {seccionActiva === 'agregar' && (
-            <div className='admin-panel-seccion'>
-              <span className='admin-etiqueta'>CATÁLOGO DE PRENDAS</span>
+                        {producto.estado === 'oculto' && (
+                          <button
+                            type='button'
+                            className='admin-boton-secundario'
+                            disabled={productoEnProceso === producto.id}
+                            onClick={() =>
+                              void cambiarEstadoProducto(producto, 'borrador')
+                            }
+                          >
+                            Pasar a borrador
+                          </button>
+                        )}
+
+                        <button
+                          type='button'
+                          className='admin-boton-eliminar'
+                          disabled={productoEnProceso === producto.id}
+                          onClick={() => void eliminarPrenda(producto)}
+                        >
+                          {productoEnProceso === producto.id
+                            ? 'Procesando…'
+                            : '× Eliminar prenda'}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {seccionActiva === 'agregar' && (
+          <section className='admin-formulario-contenedor'>
+            <div className='admin-formulario-titulo'>
+              <p className='admin-eyebrow'>
+                {productoEditando ? 'EDITAR PRODUCTO' : 'NUEVO PRODUCTO'}
+              </p>
 
               <h2>
-                {productoEditando ? 'Editar una prenda' : 'Agregar una prenda'}
+                {productoEditando
+                  ? 'Actualizá los datos de la prenda'
+                  : 'Cargá una nueva prenda'}
               </h2>
 
               <p>
-                Completá la información de la prenda. Los campos marcados con *
-                son obligatorios.
+                Completá la información y guardá la prenda como borrador o
+                publicala cuando esté lista.
               </p>
+            </div>
 
-              <form
-                className='admin-producto-formulario'
-                onSubmit={guardarNuevaPrenda}
-              >
-                <section className='admin-form-bloque'>
-                  <h3>Información general</h3>
+            <form
+              className='admin-formulario'
+              onSubmit={event => {
+                event.preventDefault()
+                void guardarFormulario(estadoFormulario)
+              }}
+            >
+              <section className='admin-formulario-seccion'>
+                <h3>Información general</h3>
 
-                  <div className='admin-form-grid'>
-                    <label className='admin-form-campo'>
-                      Nombre de la prenda *
-                      <input
-                        type='text'
-                        name='nombre'
-                        placeholder='Ej.: Blusa de lino'
-                        required
-                      />
-                    </label>
+                <div className='admin-form-grid'>
+                  <label>
+                    <span>Nombre de la prenda *</span>
 
-                    <label className='admin-form-campo'>
-                      Categoría *
-                      <select name='categoria' defaultValue='' required>
-                        <option value='' disabled>
-                          Elegí una categoría
-                        </option>
-                        <option>Remeras y musculosas</option>
-                        <option>Blusas y camisas</option>
-                        <option>Pantalones</option>
-                        <option>Jeans</option>
-                        <option>Shorts y bermudas</option>
-                        <option>Vestidos</option>
-                        <option>Camperas</option>
-                        <option>Suéteres</option>
-                        <option>Conjuntos</option>
-                        <option>Outfits</option>
-                        <option>Accesorios</option>
-                        <option>SALE</option>
-                      </select>
-                    </label>
-
-                    <label className='admin-form-campo admin-form-ancho'>
-                      Descripción
-                      <textarea
-                        name='descripcion'
-                        rows={4}
-                        placeholder='Materiales, detalles y características de la prenda...'
-                      />
-                    </label>
-
-                    <label className='admin-form-campo'>
-                      Precio de venta *
-                      <span className='admin-form-precio'>
-                        <span>$</span>
-                        <input
-                          type='number'
-                          name='precio'
-                          min='1'
-                          step='1'
-                          placeholder='22000'
-                          required
-                        />
-                      </span>
-                    </label>
-                  </div>
-                </section>
-
-                <section className='admin-form-bloque'>
-                  <h3>Fotografías</h3>
-
-                  <p>
-                    Seleccioná las imágenes de la prenda. Podrás verlas antes de
-                    guardar y quitar las que no quieras usar.
-                  </p>
-
-                  <label className='admin-form-campo'>
-                    Seleccionar imágenes
                     <input
-                      type='file'
-                      name='fotografias'
-                      accept='image/*'
-                      multiple
-                      onChange={seleccionarFotografias}
+                      value={nombre}
+                      onChange={event => setNombre(event.target.value)}
+                      placeholder='Ej.: Blusa de lino'
+                      required
                     />
                   </label>
 
-                  {fotosPreview.length > 0 && (
-                    <div className='admin-fotos-preview'>
-                      <h4>Vista previa de las fotografías</h4>
+                  <label>
+                    <span>Precio general (ARS) *</span>
 
-                      <div className='admin-fotos-grid'>
-                        {fotosPreview.map((foto, indice) => (
-                          <article className='admin-foto-preview' key={foto.id}>
-                            <img
-                              src={foto.url}
-                              alt={`Vista previa ${indice + 1}`}
-                            />
+                    <input
+                      type='number'
+                      min='0'
+                      step='0.01'
+                      value={precio}
+                      onChange={event => setPrecio(event.target.value)}
+                      placeholder='Ej.: 25000'
+                      required
+                    />
+                  </label>
 
-                            <span className='admin-foto-numero'>
-                              Foto {indice + 1}
-                            </span>
+                  <label className='admin-campo-completo'>
+                    <span>Categoría *</span>
 
-                            <p title={foto.nombre}>{foto.nombre}</p>
+                    <select
+                      value={categoria}
+                      onChange={event => setCategoria(event.target.value)}
+                      required
+                    >
+                      {categorias.map(nombreCategoria => (
+                        <option key={nombreCategoria} value={nombreCategoria}>
+                          {nombreCategoria}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                            <button
-                              type='button'
-                              onClick={() => quitarFotografia(foto.id)}
-                            >
-                              × Quitar foto
-                            </button>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </section>
+                  <label className='admin-campo-completo'>
+                    <span>Descripción</span>
 
-                <section className='admin-form-bloque'>
-                  <h3>Colores, talles y stock</h3>
+                    <textarea
+                      value={descripcion}
+                      onChange={event => setDescripcion(event.target.value)}
+                      placeholder='Contá detalles de la prenda, su tela o calce.'
+                      rows={4}
+                    />
+                  </label>
+                </div>
+              </section>
 
-                  <p>
-                    Elegí los colores disponibles, agregá los talles y creá cada
-                    variante con su stock correspondiente.
-                  </p>
+              <section className='admin-formulario-seccion'>
+                <h3>Fotografías</h3>
 
-                  <div className='admin-colores-selector'>
-                    <h4>Colores disponibles</h4>
+                <p>
+                  Podés seleccionar varias imágenes. Las nuevas fotos se
+                  mostrarán en la tienda después de guardar.
+                </p>
 
-                    <div className='admin-circulos-colores'>
-                      {colores.map(color => {
-                        const seleccionado = coloresSeleccionados.includes(
-                          color.nombre
-                        )
+                <label className='admin-selector-fotos'>
+                  <span>＋ Seleccionar imágenes</span>
 
-                        return (
-                          <button
-                            key={color.nombre}
-                            type='button'
-                            className={`admin-color-opcion ${
-                              seleccionado ? 'seleccionado' : ''
-                            }`}
-                            onClick={() => alternarColor(color.nombre)}
-                            aria-pressed={seleccionado}
-                            title={color.nombre}
-                          >
-                            <span
-                              className='admin-color-circulo'
-                              style={{ backgroundColor: color.codigo }}
-                            >
-                              {seleccionado && (
-                                <span
-                                  className={
-                                    color.nombre === 'Blanco' ||
-                                    color.nombre === 'Amarillo'
-                                      ? 'admin-color-check oscuro'
-                                      : 'admin-color-check'
-                                  }
-                                >
-                                  ✓
-                                </span>
-                              )}
-                            </span>
+                  <input
+                    type='file'
+                    accept='image/*'
+                    multiple
+                    onChange={seleccionarFotos}
+                  />
+                </label>
 
-                            <span className='admin-color-nombre'>
-                              {color.nombre}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
+                {(fotosGuardadas.length > 0 ||
+                  previsualizaciones.length > 0) && (
+                  <div className='admin-fotos-preview'>
+                    {fotosGuardadas.map((foto, index) => (
+                      <div className='admin-foto-preview' key={foto}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={foto} alt={`Foto guardada ${index + 1}`} />
 
-                    <div className='admin-color-personalizado'>
-                      <label className='admin-form-campo'>
-                        Agregar otro color
-                        <input
-                          type='text'
-                          value={nombreColorNuevo}
-                          onChange={evento =>
-                            setNombreColorNuevo(evento.target.value)
-                          }
-                          placeholder='Ej.: Bordó claro'
-                        />
-                      </label>
-
-                      <label className='admin-form-campo admin-color-elegir-tono'>
-                        Elegir tono
-                        <input
-                          type='color'
-                          value={codigoColorNuevo}
-                          onChange={evento =>
-                            setCodigoColorNuevo(evento.target.value)
-                          }
-                          aria-label='Elegir tono del nuevo color'
-                        />
-                      </label>
-
-                      <button
-                        type='button'
-                        className='admin-variante-agregar'
-                        onClick={agregarColorPersonalizado}
-                      >
-                        + Agregar color
-                      </button>
-                    </div>
-
-                    <p className='admin-form-ayuda'>
-                      Colores seleccionados: {coloresSeleccionados.length}
-                    </p>
-                  </div>
-
-                  <div className='admin-talles-selector'>
-                    <h4>Talles disponibles</h4>
-
-                    <div className='admin-talles-lista'>
-                      {talles.map(talle => (
                         <button
                           type='button'
-                          key={talle}
-                          className='admin-talle-opcion'
-                          onClick={() =>
-                            setTalles(actual =>
-                              actual.filter(item => item !== talle)
-                            )
-                          }
-                          title={`Quitar talle ${talle}`}
+                          aria-label='Quitar fotografía guardada'
+                          onClick={() => quitarFotoGuardada(foto)}
                         >
-                          {talle} <span>×</span>
+                          ×
                         </button>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
 
-                    <div className='admin-variante-entrada'>
-                      <input
-                        type='text'
-                        value={nombreTalleNuevo}
-                        onChange={evento =>
-                          setNombreTalleNuevo(evento.target.value)
-                        }
-                        onKeyDown={evento => {
-                          if (evento.key === 'Enter') {
-                            evento.preventDefault()
-                            agregarTalle()
-                          }
-                        }}
-                        placeholder='Ej.: S, M, XL, 40, 42...'
-                        aria-label='Nuevo talle'
-                      />
+                    {previsualizaciones.map((foto, index) => (
+                      <div className='admin-foto-preview' key={foto}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={foto} alt={`Vista previa ${index + 1}`} />
 
-                      <button
-                        type='button'
-                        className='admin-variante-agregar'
-                        onClick={agregarTalle}
-                      >
-                        + Agregar talle
-                      </button>
-                    </div>
+                        <button
+                          type='button'
+                          aria-label='Quitar fotografía nueva'
+                          onClick={() => quitarFotoNueva(index)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
                   </div>
+                )}
+              </section>
 
-                  <div className='admin-variante-editor'>
-                    <h4>Agregar una variante</h4>
+              <section className='admin-formulario-seccion'>
+                <h3>Colores, talles y stock</h3>
 
+                <p>
+                  Cada fila representa una combinación concreta. Por ejemplo:
+                  negro, talle XL, stock 5.
+                </p>
+
+                {variantesFormulario.length === 0 ? (
+                  <div className='admin-sin-variantes'>
                     <p>
-                      Cada variante corresponde a un color y talle concretos.
+                      Todavía no agregaste variantes. Podés guardar la prenda
+                      sin variantes y completar estos datos más adelante.
                     </p>
+                  </div>
+                ) : (
+                  <div className='admin-variantes-lista'>
+                    {variantesFormulario.map((variante, indice) => (
+                      <div className='admin-variante-fila' key={variante.id}>
+                        <div className='admin-variante-numero'>
+                          Variante {indice + 1}
+                        </div>
 
-                    <div className='admin-form-grid'>
-                      <label className='admin-form-campo'>
-                        Color *
-                        <select
-                          value={colorVariante}
-                          onChange={evento =>
-                            setColorVariante(evento.target.value)
-                          }
-                        >
-                          <option value=''>Elegí un color</option>
-                          {coloresSeleccionados.map(nombre => (
-                            <option key={nombre} value={nombre}>
-                              {nombre}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                        <label>
+                          <span>Color</span>
 
-                      <label className='admin-form-campo'>
-                        Talle *
-                        <select
-                          value={talleVariante}
-                          onChange={evento =>
-                            setTalleVariante(evento.target.value)
-                          }
-                        >
-                          <option value=''>Elegí un talle</option>
-                          {talles.map(talle => (
-                            <option key={talle} value={talle}>
-                              {talle}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                          <input
+                            value={variante.color}
+                            onChange={event =>
+                              actualizarVariante(
+                                variante.id,
+                                'color',
+                                event.target.value
+                              )
+                            }
+                            placeholder='Ej.: Negro'
+                          />
+                        </label>
 
-                      <label className='admin-form-campo'>
-                        Stock disponible *
-                        <input
-                          type='number'
-                          min='0'
-                          step='1'
-                          value={stockVariante}
-                          onChange={evento =>
-                            setStockVariante(evento.target.value)
-                          }
-                          required
-                        />
-                      </label>
+                        <label>
+                          <span>Muestra de color</span>
 
-                      <label className='admin-form-campo'>
-                        Precio personalizado (opcional)
-                        <span className='admin-form-precio'>
-                          <span>$</span>
+                          <input
+                            type='color'
+                            value={variante.codigoColor}
+                            onChange={event =>
+                              actualizarVariante(
+                                variante.id,
+                                'codigoColor',
+                                event.target.value
+                              )
+                            }
+                            aria-label='Elegir código visual del color'
+                          />
+                        </label>
+
+                        <label>
+                          <span>Talle</span>
+
+                          <input
+                            value={variante.talle}
+                            onChange={event =>
+                              actualizarVariante(
+                                variante.id,
+                                'talle',
+                                event.target.value
+                              )
+                            }
+                            placeholder='Ej.: S, XL, 42'
+                          />
+                        </label>
+
+                        <label>
+                          <span>Stock</span>
+
                           <input
                             type='number'
-                            min='1'
+                            min='0'
                             step='1'
-                            value={precioVariante}
-                            onChange={evento =>
-                              setPrecioVariante(evento.target.value)
+                            value={variante.stock}
+                            onChange={event =>
+                              actualizarVariante(
+                                variante.id,
+                                'stock',
+                                event.target.value
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          <span>Precio particular (opcional)</span>
+
+                          <input
+                            type='number'
+                            min='0'
+                            step='0.01'
+                            value={variante.precio}
+                            onChange={event =>
+                              actualizarVariante(
+                                variante.id,
+                                'precio',
+                                event.target.value
+                              )
                             }
                             placeholder='Usar precio general'
                           />
-                        </span>
-                      </label>
-                    </div>
+                        </label>
 
-                    <button
-                      type='button'
-                      className='admin-boton-principal'
-                      onClick={agregarVariante}
-                    >
-                      + Agregar variante
-                    </button>
-                  </div>
-
-                  <div className='admin-variantes-lista'>
-                    <h4>Variantes de esta prenda ({variantes.length})</h4>
-
-                    {variantes.length === 0 ? (
-                      <div className='admin-variantes-vacio'>
-                        <span>＋</span>
-                        <strong>Todavía no hay variantes</strong>
-                        <small>
-                          Seleccioná colores y talles, y agregá cada combinación
-                          por separado.
-                        </small>
+                        <button
+                          type='button'
+                          className='admin-boton-eliminar'
+                          onClick={() => quitarVariante(variante.id)}
+                        >
+                          × Quitar variante
+                        </button>
                       </div>
-                    ) : (
-                      <div className='admin-variantes-tabla'>
-                        {variantes.map(variante => {
-                          const color = colores.find(
-                            item => item.nombre === variante.color
-                          )
-
-                          return (
-                            <article
-                              className='admin-variante-fila'
-                              key={variante.id}
-                            >
-                              <span
-                                className='admin-color-circulo admin-color-mini'
-                                style={{
-                                  backgroundColor: color?.codigo ?? '#929292'
-                                }}
-                              />
-
-                              <div className='admin-variante-datos'>
-                                <strong>
-                                  {variante.color} · {variante.talle}
-                                </strong>
-                                <small>
-                                  {variante.stock === 0
-                                    ? 'Agotada'
-                                    : `${variante.stock} unidades disponibles`}
-                                </small>
-                              </div>
-
-                              <div className='admin-variante-precio'>
-                                {variante.precio
-                                  ? `$${Number(variante.precio).toLocaleString(
-                                      'es-AR'
-                                    )}`
-                                  : 'Precio general'}
-                              </div>
-
-                              <button
-                                type='button'
-                                className='admin-variante-eliminar'
-                                onClick={() => eliminarVariante(variante.id)}
-                                aria-label={`Eliminar variante ${variante.color} talle ${variante.talle}`}
-                                title='Eliminar variante'
-                              >
-                                ×
-                              </button>
-                            </article>
-                          )
-                        })}
-                      </div>
-                    )}
+                    ))}
                   </div>
-                </section>
+                )}
 
-                <div className='admin-form-acciones'>
+                <button
+                  type='button'
+                  className='admin-boton-secundario'
+                  onClick={agregarVariante}
+                >
+                  + Agregar color, talle y stock
+                </button>
+              </section>
+
+              <section className='admin-formulario-seccion'>
+                <h3>Publicación</h3>
+
+                <p>
+                  Los borradores no son visibles para los clientes. Podés
+                  publicar la prenda ahora o guardarla para más adelante.
+                </p>
+
+                <label>
+                  <span>Estado al guardar</span>
+
+                  <select
+                    value={estadoFormulario}
+                    onChange={event =>
+                      setEstadoFormulario(event.target.value as EstadoProducto)
+                    }
+                  >
+                    <option value='borrador'>Borrador</option>
+                    <option value='publicado'>Publicado en la tienda</option>
+                    <option value='oculto'>Oculto en la tienda</option>
+                  </select>
+                </label>
+              </section>
+
+              {mensaje && (
+                <p className='admin-formulario-mensaje' role='status'>
+                  {mensaje}
+                </p>
+              )}
+
+              <div className='admin-formulario-acciones'>
+                <button
+                  type='button'
+                  className='admin-boton-secundario'
+                  disabled={guardando}
+                  onClick={() => {
+                    limpiarFormulario()
+                    setSeccionActiva('productos')
+                  }}
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type='button'
+                  className='admin-boton-secundario'
+                  disabled={guardando}
+                  onClick={() => void guardarFormulario('borrador')}
+                >
+                  Guardar como borrador
+                </button>
+
+                <button
+                  type='submit'
+                  className='admin-boton-principal'
+                  disabled={guardando}
+                >
+                  {guardando
+                    ? 'Guardando…'
+                    : estadoFormulario === 'publicado'
+                    ? 'Guardar y publicar'
+                    : estadoFormulario === 'oculto'
+                    ? 'Guardar como oculto'
+                    : 'Guardar cambios'}
+                </button>
+
+                {productoEditando && (
                   <button
                     type='button'
-                    className='admin-form-cancelar'
-                    onClick={cancelarEdicion}
+                    className='admin-boton-eliminar'
+                    disabled={guardando}
+                    onClick={() => void eliminarPrenda(productoEditando)}
                   >
-                    Cancelar
+                    × Eliminar prenda
                   </button>
-
-                  <button type='submit' className='admin-boton-principal'>
-                    {productoEditando ? 'Guardar cambios' : 'Guardar prenda'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-        </div>
+                )}
+              </div>
+            </form>
+          </section>
+        )}
       </section>
     </main>
   )
