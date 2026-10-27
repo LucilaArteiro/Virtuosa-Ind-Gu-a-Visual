@@ -268,7 +268,9 @@ export default function Home () {
       <div className='barra-superior'>
         <span>MODA CON PROPÓSITO</span>
         <span className='barra-separador'>✦</span>
-        <span>SIN TEMOR AL FUTURO</span>
+        <span>TU CONFIANZA</span>
+        <span className='barra-separador'>✦</span>
+        <span>TU FUERZA</span>
       </div>
 
       <header className='encabezado'>
@@ -418,7 +420,6 @@ export default function Home () {
         <span>IDENTIDAD</span>
         <span className='separador-franja'>✦</span>
         <span>CONFIANZA</span>
-        <span className='separador-franja'>✦</span>
       </section>
 
       {/* CATÁLOGO CONECTADO A SUPABASE */}

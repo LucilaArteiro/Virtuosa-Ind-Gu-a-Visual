@@ -18,6 +18,7 @@ export type EstadoProducto = 'borrador' | 'publicado' | 'oculto'
 export type VarianteProducto = {
   id: string
   color: string
+  colorCodigo?: string
   talle: string
   stock: number
   precio?: number

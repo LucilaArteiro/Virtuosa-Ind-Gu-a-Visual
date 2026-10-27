@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
-
 import './admin.css'
+import { createClient } from '@/lib/supabase/client'
+import { optimizarFotografia } from '@/lib/optimizar-fotografia'
 
 import {
   categorias,
@@ -33,19 +34,29 @@ type ColorFormulario = {
   nombre: string
   codigo: string
 }
-
-const varianteVacia = (): VarianteFormulario => ({
-  id: crypto.randomUUID(),
-  color: '',
-  codigoColor: '#c5a052',
-  talle: '',
-  stock: '0',
-  precio: ''
-})
+const coloresPredeterminados: ColorFormulario[] = [
+  { nombre: 'Negro', codigo: '#171417' },
+  { nombre: 'Blanco', codigo: '#ffffff' },
+  { nombre: 'Crudo', codigo: '#eee5d5' },
+  { nombre: 'Beige', codigo: '#d9c5a0' },
+  { nombre: 'Gris', codigo: '#999999' },
+  { nombre: 'Marrón', codigo: '#76513d' },
+  { nombre: 'Rosa', codigo: '#f4dce5' },
+  { nombre: 'Rosa viejo', codigo: '#c78f9d' },
+  { nombre: 'Bordó', codigo: '#702b3b' },
+  { nombre: 'Rojo', codigo: '#b53636' },
+  { nombre: 'Naranja', codigo: '#dc783b' },
+  { nombre: 'Amarillo', codigo: '#efd36c' },
+  { nombre: 'Verde', codigo: '#397451' },
+  { nombre: 'Celeste', codigo: '#9bcbea' },
+  { nombre: 'Azul', codigo: '#244a78' },
+  { nombre: 'Azul petróleo', codigo: '#24545a' },
+  { nombre: 'Lila', codigo: '#c5a4dc' },
+  { nombre: 'Violeta', codigo: '#7650a8' }
+]
 
 const precioValido = (valor: string): boolean => {
   const numero = Number(valor)
-
   return valor.trim() !== '' && Number.isFinite(numero) && numero >= 0
 }
 
@@ -59,7 +70,6 @@ const formatoPrecio = (precio: number): string =>
 const textoEstado = (estado: EstadoProducto): string => {
   if (estado === 'publicado') return 'Publicado'
   if (estado === 'oculto') return 'Oculto'
-
   return 'Borrador'
 }
 
@@ -77,7 +87,14 @@ function obtenerCodigoColor (color: string): string {
     verde: '#397451'
   }
 
-  return colores[color.toLocaleLowerCase()] ?? '#c5a052'
+  return colores[color.trim().toLocaleLowerCase()] ?? '#c5a052'
+}
+
+function separarTalles (valor: string): string[] {
+  return valor
+    .split(/[,;\n]+/)
+    .map(talle => talle.trim())
+    .filter(Boolean)
 }
 
 export default function AdminPage () {
@@ -85,7 +102,6 @@ export default function AdminPage () {
   const [cargando, setCargando] = useState(true)
 
   const [seccionActiva, setSeccionActiva] = useState<Seccion>('productos')
-
   const [menuAbierto, setMenuAbierto] = useState(false)
 
   const [busqueda, setBusqueda] = useState('')
@@ -100,7 +116,6 @@ export default function AdminPage () {
   const [descripcion, setDescripcion] = useState('')
   const [categoria, setCategoria] = useState<string>(categorias[0])
   const [precio, setPrecio] = useState('')
-
   const [estadoFormulario, setEstadoFormulario] =
     useState<EstadoProducto>('borrador')
 
@@ -108,16 +123,55 @@ export default function AdminPage () {
     VarianteFormulario[]
   >([])
 
+  const [coloresFormulario, setColoresFormulario] = useState<ColorFormulario[]>(
+    []
+  )
+
+  const [tallesFormulario, setTallesFormulario] = useState<string[]>([])
+
+  const [nuevoColor, setNuevoColor] = useState('')
+  const [nuevoCodigoColor, setNuevoCodigoColor] = useState('#c5a052')
+  const [nuevoTalle, setNuevoTalle] = useState('')
+
+  const [colorCombinacion, setColorCombinacion] = useState('')
+  const [tallesCombinacion, setTallesCombinacion] = useState<string[]>([])
+
   const [fotosGuardadas, setFotosGuardadas] = useState<string[]>([])
   const [archivosFotos, setArchivosFotos] = useState<File[]>([])
   const [previsualizaciones, setPrevisualizaciones] = useState<string[]>([])
 
   const [guardando, setGuardando] = useState(false)
+  const [optimizandoFotos, setOptimizandoFotos] = useState(false)
+  const [cerrandoSesion, setCerrandoSesion] = useState(false)
   const [productoEnProceso, setProductoEnProceso] = useState<string | null>(
     null
   )
-
   const [mensaje, setMensaje] = useState('')
+  async function cerrarSesion () {
+    if (cerrandoSesion) return
+
+    setCerrandoSesion(true)
+
+    try {
+      const supabase = createClient()
+
+      const { error } = await supabase.auth.signOut()
+
+      if (error) {
+        throw error
+      }
+
+      window.location.replace('/admin/login')
+    } catch (error) {
+      console.error('Error cerrando la sesión:', error)
+
+      setMensaje(
+        'No se pudo cerrar la sesión. Revisá tu conexión e intentá nuevamente.'
+      )
+
+      setCerrandoSesion(false)
+    }
+  }
 
   async function cargarProductos () {
     setCargando(true)
@@ -127,7 +181,6 @@ export default function AdminPage () {
       setProductos(lista)
     } catch (error) {
       console.error('Error cargando los productos:', error)
-
       setMensaje('No se pudieron cargar las prendas. Revisá la conexión.')
     } finally {
       setCargando(false)
@@ -140,7 +193,6 @@ export default function AdminPage () {
 
   useEffect(() => {
     const urls = archivosFotos.map(archivo => URL.createObjectURL(archivo))
-
     setPrevisualizaciones(urls)
 
     return () => {
@@ -187,7 +239,17 @@ export default function AdminPage () {
     setCategoria(categorias[0])
     setPrecio('')
     setEstadoFormulario('borrador')
+
     setVariantesFormulario([])
+    setColoresFormulario([])
+    setTallesFormulario([])
+
+    setNuevoColor('')
+    setNuevoCodigoColor('#c5a052')
+    setNuevoTalle('')
+    setColorCombinacion('')
+    setTallesCombinacion([])
+
     setFotosGuardadas([])
     setArchivosFotos([])
     setMensaje('')
@@ -209,18 +271,62 @@ export default function AdminPage () {
     setFotosGuardadas(producto.fotos ?? [])
     setArchivosFotos([])
 
+    const variantesExistentes = producto.variantes ?? []
+    const coloresUnicos = new Map<string, ColorFormulario>()
+    const tallesUnicos = new Map<string, string>()
+
+    variantesExistentes.forEach(variante => {
+      const nombreColor = variante.color.trim()
+      const claveColor = nombreColor.toLocaleLowerCase()
+
+      if (nombreColor && !coloresUnicos.has(claveColor)) {
+        coloresUnicos.set(claveColor, {
+          nombre: nombreColor,
+          codigo: variante.colorCodigo ?? obtenerCodigoColor(nombreColor)
+        })
+      }
+
+      // Permite recuperar talles individuales de registros antiguos agrupados.
+      separarTalles(variante.talle).forEach(talle => {
+        const claveTalle = talle.toLocaleLowerCase()
+
+        if (!tallesUnicos.has(claveTalle)) {
+          tallesUnicos.set(claveTalle, talle)
+        }
+      })
+    })
+
+    setColoresFormulario(Array.from(coloresUnicos.values()))
+    setTallesFormulario(Array.from(tallesUnicos.values()))
+
+    // Se conserva cada variante existente y su stock original.
     setVariantesFormulario(
-      (producto.variantes ?? []).map(variante => ({
+      variantesExistentes.map(variante => ({
         id: variante.id,
         color: variante.color,
-        codigoColor: obtenerCodigoColor(variante.color),
+        codigoColor: variante.colorCodigo ?? obtenerCodigoColor(variante.color),
         talle: variante.talle,
         stock: String(variante.stock),
         precio: variante.precio === undefined ? '' : String(variante.precio)
       }))
     )
 
-    setMensaje('')
+    setNuevoColor('')
+    setNuevoCodigoColor('#c5a052')
+    setNuevoTalle('')
+    setColorCombinacion('')
+    setTallesCombinacion([])
+
+    const hayTallesAgrupados = variantesExistentes.some(variante =>
+      /[,;\n]/.test(variante.talle)
+    )
+
+    setMensaje(
+      hayTallesAgrupados
+        ? 'Esta prenda tiene variantes antiguas con talles agrupados. Creá las combinaciones individuales, asigná sus cantidades y verificá el stock antes de quitar la variante agrupada.'
+        : ''
+    )
+
     setSeccionActiva('agregar')
     setMenuAbierto(false)
 
@@ -230,8 +336,225 @@ export default function AdminPage () {
     })
   }
 
-  function agregarVariante () {
-    setVariantesFormulario(actuales => [...actuales, varianteVacia()])
+  function seleccionarColorPredeterminado (color: ColorFormulario) {
+    const existente = coloresFormulario.find(
+      item =>
+        item.nombre.toLocaleLowerCase() === color.nombre.toLocaleLowerCase()
+    )
+
+    if (existente) {
+      setColorCombinacion(existente.nombre)
+      setMensaje(`${existente.nombre} ya está agregado y quedó seleccionado.`)
+      return
+    }
+
+    setColoresFormulario(actuales => [...actuales, { ...color }])
+    setColorCombinacion(color.nombre)
+    setMensaje(`${color.nombre} agregado. Ahora podés elegir varios talles.`)
+  }
+  function agregarColorFormulario () {
+    const nombreColor = nuevoColor.trim()
+
+    if (!nombreColor) {
+      setMensaje('Escribí el nombre del color.')
+      return
+    }
+
+    const existe = coloresFormulario.some(
+      color =>
+        color.nombre.toLocaleLowerCase() === nombreColor.toLocaleLowerCase()
+    )
+
+    if (existe) {
+      setMensaje('Ese color ya está agregado.')
+      return
+    }
+
+    setColoresFormulario(actuales => [
+      ...actuales,
+      { nombre: nombreColor, codigo: nuevoCodigoColor }
+    ])
+
+    setColorCombinacion(nombreColor)
+    setNuevoColor('')
+    setMensaje('')
+  }
+
+  function actualizarColorCodigo (nombreColor: string, codigo: string) {
+    setColoresFormulario(actuales =>
+      actuales.map(color =>
+        color.nombre === nombreColor ? { ...color, codigo } : color
+      )
+    )
+
+    setVariantesFormulario(actuales =>
+      actuales.map(variante =>
+        variante.color.toLocaleLowerCase() === nombreColor.toLocaleLowerCase()
+          ? { ...variante, codigoColor: codigo }
+          : variante
+      )
+    )
+  }
+
+  function quitarColorFormulario (nombreColor: string) {
+    const tieneVariantes = variantesFormulario.some(
+      variante =>
+        variante.color.toLocaleLowerCase() === nombreColor.toLocaleLowerCase()
+    )
+
+    if (
+      tieneVariantes &&
+      !window.confirm(
+        `¿Quitar el color "${nombreColor}" y todas sus combinaciones asociadas?`
+      )
+    ) {
+      return
+    }
+
+    setColoresFormulario(actuales =>
+      actuales.filter(
+        color =>
+          color.nombre.toLocaleLowerCase() !== nombreColor.toLocaleLowerCase()
+      )
+    )
+
+    setVariantesFormulario(actuales =>
+      actuales.filter(
+        variante =>
+          variante.color.toLocaleLowerCase() !== nombreColor.toLocaleLowerCase()
+      )
+    )
+
+    setColorCombinacion(actual =>
+      actual.toLocaleLowerCase() === nombreColor.toLocaleLowerCase()
+        ? ''
+        : actual
+    )
+
+    setMensaje('')
+  }
+
+  function agregarTalleFormulario () {
+    const nuevos = separarTalles(nuevoTalle)
+
+    if (nuevos.length === 0) {
+      setMensaje('Escribí al menos un talle.')
+      return
+    }
+
+    const existentes = new Set(
+      tallesFormulario.map(talle => talle.toLocaleLowerCase())
+    )
+
+    const agregados: string[] = []
+
+    for (const talle of nuevos) {
+      const clave = talle.toLocaleLowerCase()
+
+      if (!existentes.has(clave)) {
+        existentes.add(clave)
+        agregados.push(talle)
+      }
+    }
+
+    if (agregados.length === 0) {
+      setMensaje('Esos talles ya están agregados.')
+      return
+    }
+
+    setTallesFormulario(actuales => [...actuales, ...agregados])
+
+    setNuevoTalle('')
+    setMensaje('')
+  }
+
+  function quitarTalleFormulario (talle: string) {
+    const tieneVariantes = variantesFormulario.some(variante =>
+      separarTalles(variante.talle).some(
+        talleVariante =>
+          talleVariante.toLocaleLowerCase() === talle.toLocaleLowerCase()
+      )
+    )
+
+    if (
+      tieneVariantes &&
+      !window.confirm(
+        `¿Quitar el talle "${talle}" y todas sus combinaciones asociadas?`
+      )
+    ) {
+      return
+    }
+
+    setTallesFormulario(actuales =>
+      actuales.filter(
+        item => item.toLocaleLowerCase() !== talle.toLocaleLowerCase()
+      )
+    )
+
+    setVariantesFormulario(actuales =>
+      actuales.filter(
+        variante =>
+          !separarTalles(variante.talle).some(
+            talleVariante =>
+              talleVariante.toLocaleLowerCase() === talle.toLocaleLowerCase()
+          )
+      )
+    )
+
+    setTallesCombinacion(actuales =>
+      actuales.filter(
+        item => item.toLocaleLowerCase() !== talle.toLocaleLowerCase()
+      )
+    )
+
+    setMensaje('')
+  }
+
+  function agregarCombinacion () {
+    const color = coloresFormulario.find(
+      item => item.nombre === colorCombinacion
+    )
+
+    if (!color) {
+      setMensaje('Elegí un color.')
+      return
+    }
+
+    if (tallesCombinacion.length === 0) {
+      setMensaje('Seleccioná uno o varios talles.')
+      return
+    }
+
+    const tallesNuevos = tallesCombinacion.filter(
+      talle =>
+        !variantesFormulario.some(
+          variante =>
+            variante.color.toLocaleLowerCase() ===
+              color.nombre.toLocaleLowerCase() &&
+            variante.talle.toLocaleLowerCase() === talle.toLocaleLowerCase()
+        )
+    )
+
+    if (tallesNuevos.length === 0) {
+      setMensaje('Las combinaciones seleccionadas ya están agregadas.')
+      return
+    }
+
+    const nuevasVariantes: VarianteFormulario[] = tallesNuevos.map(talle => ({
+      id: crypto.randomUUID(),
+      color: color.nombre,
+      codigoColor: color.codigo,
+      talle,
+      stock: '0',
+      precio: ''
+    }))
+
+    setVariantesFormulario(actuales => [...actuales, ...nuevasVariantes])
+    setTallesCombinacion([])
+
+    setMensaje(
+      `Se agregaron ${nuevasVariantes.length} combinaciones para ${color.nombre}.`
+    )
   }
 
   function actualizarVariante (
@@ -252,16 +575,58 @@ export default function AdminPage () {
     )
   }
 
-  function seleccionarFotos (event: ChangeEvent<HTMLInputElement>) {
-    const nuevasFotos = Array.from(event.target.files ?? [])
+  async function seleccionarFotos (event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    const nuevasFotos = Array.from(input.files ?? [])
+
+    // Permite volver a seleccionar la misma fotografía.
+    input.value = ''
 
     if (nuevasFotos.length === 0) return
 
-    setArchivosFotos(actuales => [...actuales, ...nuevasFotos])
+    setOptimizandoFotos(true)
+    setMensaje('Optimizando fotografías…')
 
-    event.target.value = ''
+    try {
+      const fotosOptimizadas = await Promise.all(
+        nuevasFotos.map(optimizarFotografia)
+      )
+
+      setArchivosFotos(actuales => [...actuales, ...fotosOptimizadas])
+
+      const pesoOriginal = nuevasFotos.reduce(
+        (total, foto) => total + foto.size,
+        0
+      )
+
+      const pesoFinal = fotosOptimizadas.reduce(
+        (total, foto) => total + foto.size,
+        0
+      )
+
+      const porcentajeReducido =
+        pesoOriginal > 0
+          ? Math.max(
+              0,
+              Math.round(((pesoOriginal - pesoFinal) / pesoOriginal) * 100)
+            )
+          : 0
+
+      if (porcentajeReducido > 0) {
+        setMensaje(
+          `Fotografías listas. Se redujo el peso un ${porcentajeReducido} %.`
+        )
+      } else {
+        setMensaje('Fotografías listas para guardar.')
+      }
+    } catch (error) {
+      console.error('Error procesando las fotografías:', error)
+
+      setMensaje('No se pudieron procesar las fotografías. Intentá nuevamente.')
+    } finally {
+      setOptimizandoFotos(false)
+    }
   }
-
   function quitarFotoNueva (indice: number) {
     setArchivosFotos(actuales => actuales.filter((_, i) => i !== indice))
   }
@@ -269,7 +634,6 @@ export default function AdminPage () {
   function quitarFotoGuardada (url: string) {
     setFotosGuardadas(actuales => actuales.filter(foto => foto !== url))
   }
-
   async function guardarFormulario (estadoSolicitado: EstadoProducto) {
     setMensaje('')
 
@@ -295,6 +659,7 @@ export default function AdminPage () {
         return {
           id: variante.id,
           color: variante.color.trim(),
+          colorCodigo: variante.codigoColor,
           talle: variante.talle.trim(),
           stock:
             Number.isFinite(stockNumero) && stockNumero >= 0
@@ -308,28 +673,7 @@ export default function AdminPage () {
         }
       })
 
-    /*
-     * Tercer argumento obligatorio de guardarProductoSupabase:
-     * una lista de colores únicos con su código visual.
-     */
-    const coloresMap = new Map<string, ColorFormulario>()
-
-    variantesFormulario.forEach(variante => {
-      const nombreColor = variante.color.trim()
-
-      if (!nombreColor) return
-
-      const clave = nombreColor.toLocaleLowerCase()
-
-      if (!coloresMap.has(clave)) {
-        coloresMap.set(clave, {
-          nombre: nombreColor,
-          codigo: variante.codigoColor
-        })
-      }
-    })
-
-    const colores = Array.from(coloresMap.values())
+    const colores = coloresFormulario
 
     const ahora = new Date().toISOString()
 
@@ -349,9 +693,7 @@ export default function AdminPage () {
     setGuardando(true)
 
     try {
-      // CORREGIDO: se pasan los tres argumentos requeridos.
       await guardarProductoSupabase(producto, archivosFotos, colores)
-
       await cargarProductos()
 
       limpiarFormulario()
@@ -368,7 +710,9 @@ export default function AdminPage () {
       console.error('Error guardando la prenda:', error)
 
       setMensaje(
-        'No se pudo guardar la prenda. Revisá la conexión e intentá nuevamente.'
+        error instanceof Error
+          ? error.message
+          : 'No se pudo guardar la prenda. Revisá la conexión e intentá nuevamente.'
       )
     } finally {
       setGuardando(false)
@@ -384,7 +728,6 @@ export default function AdminPage () {
 
     try {
       await actualizarEstadoSupabase(producto.id, nuevoEstado)
-
       await cargarProductos()
 
       setMensaje(
@@ -394,7 +737,6 @@ export default function AdminPage () {
       )
     } catch (error) {
       console.error('Error cambiando el estado:', error)
-
       setMensaje('No se pudo actualizar el estado de la prenda.')
     } finally {
       setProductoEnProceso(null)
@@ -403,7 +745,7 @@ export default function AdminPage () {
 
   async function eliminarPrenda (producto: Producto) {
     const confirmar = window.confirm(
-      `¿Querés eliminar definitivamente “${producto.nombre}”?\n\nSe eliminará de la tienda y del catálogo administrativo. Esta acción no se puede deshacer.`
+      `¿Querés eliminar definitivamente “${producto.nombre}”? \n\nSe eliminará de la tienda y del catálogo administrativo. Esta acción no se puede deshacer.`
     )
 
     if (!confirmar) return
@@ -423,7 +765,6 @@ export default function AdminPage () {
       setMensaje(`La prenda “${producto.nombre}” fue eliminada.`)
     } catch (error) {
       console.error('Error eliminando la prenda:', error)
-
       setMensaje(
         'No se pudo eliminar la prenda. Revisá la conexión e intentá nuevamente.'
       )
@@ -482,7 +823,6 @@ export default function AdminPage () {
           <a href='/' target='_blank' rel='noreferrer'>
             Ver tienda ↗
           </a>
-
           <small>Vestida de fuerza y dignidad</small>
         </div>
       </aside>
@@ -509,7 +849,6 @@ export default function AdminPage () {
 
           <div>
             <p className='admin-header-etiqueta'>VIRTUOSA IND</p>
-
             <h1>
               {seccionActiva === 'inicio'
                 ? 'Inicio'
@@ -521,13 +860,23 @@ export default function AdminPage () {
             </h1>
           </div>
 
-          <span className='admin-usuario'>Administradora</span>
+          <div className='admin-header-acciones'>
+            <span className='admin-usuario'>Administradora</span>
+
+            <button
+              type='button'
+              className='admin-cerrar-sesion'
+              onClick={() => void cerrarSesion()}
+              disabled={cerrandoSesion}
+            >
+              {cerrandoSesion ? 'Cerrando sesión…' : 'Cerrar sesión'}
+            </button>
+          </div>
         </header>
 
         {mensaje && (
           <div className='admin-mensaje' role='status'>
             <span>{mensaje}</span>
-
             <button
               type='button'
               aria-label='Cerrar mensaje'
@@ -542,14 +891,11 @@ export default function AdminPage () {
           <div className='admin-inicio'>
             <section className='admin-bienvenida'>
               <p className='admin-eyebrow'>PANEL DE CONTROL</p>
-
               <h2>Tu tienda, organizada en un solo lugar.</h2>
-
               <p>
                 Administrá las prendas, revisá su estado y actualizá el catálogo
                 de VIRTUOSA IND.
               </p>
-
               <button
                 type='button'
                 className='admin-boton-principal'
@@ -564,17 +910,14 @@ export default function AdminPage () {
                 <span>Total de prendas</span>
                 <strong>{productos.length}</strong>
               </article>
-
               <article>
                 <span>Publicadas</span>
                 <strong>{publicados}</strong>
               </article>
-
               <article>
                 <span>Borradores</span>
                 <strong>{borradores}</strong>
               </article>
-
               <article>
                 <span>Ocultas</span>
                 <strong>{ocultos}</strong>
@@ -596,9 +939,7 @@ export default function AdminPage () {
             <div className='admin-listado-titulo'>
               <div>
                 <p className='admin-eyebrow'>CATÁLOGO ADMINISTRATIVO</p>
-
                 <h2>Todas las prendas</h2>
-
                 <p>Editá, publicá, ocultá o eliminá productos del catálogo.</p>
               </div>
 
@@ -614,7 +955,6 @@ export default function AdminPage () {
             <div className='admin-filtros'>
               <label>
                 <span>Buscar</span>
-
                 <input
                   type='search'
                   placeholder='Nombre, descripción o categoría'
@@ -625,13 +965,11 @@ export default function AdminPage () {
 
               <label>
                 <span>Categoría</span>
-
                 <select
                   value={filtroCategoria}
                   onChange={event => setFiltroCategoria(event.target.value)}
                 >
                   <option value='Todas'>Todas las categorías</option>
-
                   {categorias.map(nombreCategoria => (
                     <option key={nombreCategoria} value={nombreCategoria}>
                       {nombreCategoria}
@@ -642,7 +980,6 @@ export default function AdminPage () {
 
               <label>
                 <span>Estado</span>
-
                 <select
                   value={filtroEstado}
                   onChange={event => setFiltroEstado(event.target.value)}
@@ -661,9 +998,7 @@ export default function AdminPage () {
               <div className='admin-estado-vacio'>
                 <span>◇</span>
                 <h3>No encontramos prendas</h3>
-
                 <p>Probá con otra búsqueda o agregá una prenda al catálogo.</p>
-
                 <button
                   type='button'
                   className='admin-boton-secundario'
@@ -698,15 +1033,12 @@ export default function AdminPage () {
                       <p className='admin-producto-categoria'>
                         {producto.categoria}
                       </p>
-
                       <h3>{producto.nombre}</h3>
-
                       <strong className='admin-producto-precio'>
                         {formatoPrecio(producto.precio)}
                       </strong>
-
                       <p className='admin-producto-variantes'>
-                        {(producto.variantes ?? []).length} variantes
+                        {(producto.variantes ?? []).length} combinaciones
                       </p>
 
                       <div className='admin-producto-acciones'>
@@ -797,13 +1129,11 @@ export default function AdminPage () {
               <p className='admin-eyebrow'>
                 {productoEditando ? 'EDITAR PRODUCTO' : 'NUEVO PRODUCTO'}
               </p>
-
               <h2>
                 {productoEditando
                   ? 'Actualizá los datos de la prenda'
                   : 'Cargá una nueva prenda'}
               </h2>
-
               <p>
                 Completá la información y guardá la prenda como borrador o
                 publicala cuando esté lista.
@@ -823,7 +1153,6 @@ export default function AdminPage () {
                 <div className='admin-form-grid'>
                   <label>
                     <span>Nombre de la prenda *</span>
-
                     <input
                       value={nombre}
                       onChange={event => setNombre(event.target.value)}
@@ -834,7 +1163,6 @@ export default function AdminPage () {
 
                   <label>
                     <span>Precio general (ARS) *</span>
-
                     <input
                       type='number'
                       min='0'
@@ -848,7 +1176,6 @@ export default function AdminPage () {
 
                   <label className='admin-campo-completo'>
                     <span>Categoría *</span>
-
                     <select
                       value={categoria}
                       onChange={event => setCategoria(event.target.value)}
@@ -864,7 +1191,6 @@ export default function AdminPage () {
 
                   <label className='admin-campo-completo'>
                     <span>Descripción</span>
-
                     <textarea
                       value={descripcion}
                       onChange={event => setDescripcion(event.target.value)}
@@ -877,22 +1203,37 @@ export default function AdminPage () {
 
               <section className='admin-formulario-seccion'>
                 <h3>Fotografías</h3>
-
                 <p>
                   Podés seleccionar varias imágenes. Las nuevas fotos se
                   mostrarán en la tienda después de guardar.
                 </p>
 
-                <label className='admin-selector-fotos'>
-                  <span>＋ Seleccionar imágenes</span>
+                <label
+                  className={`admin-selector-fotos ${
+                    optimizandoFotos ? 'admin-fotos-optimizando' : ''
+                  }`}
+                >
+                  <span>
+                    {optimizandoFotos
+                      ? 'Optimizando fotografías…'
+                      : '＋ Seleccionar imágenes'}
+                  </span>
 
                   <input
                     type='file'
                     accept='image/*'
                     multiple
+                    disabled={optimizandoFotos || guardando}
                     onChange={seleccionarFotos}
                   />
                 </label>
+
+                {optimizandoFotos && (
+                  <p className='admin-estado-optimizacion' role='status'>
+                    Estamos reduciendo el peso de las imágenes. No cierres esta
+                    pantalla.
+                  </p>
+                )}
 
                 {(fotosGuardadas.length > 0 ||
                   previsualizaciones.length > 0) && (
@@ -901,7 +1242,6 @@ export default function AdminPage () {
                       <div className='admin-foto-preview' key={foto}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={foto} alt={`Foto guardada ${index + 1}`} />
-
                         <button
                           type='button'
                           aria-label='Quitar fotografía guardada'
@@ -916,7 +1256,6 @@ export default function AdminPage () {
                       <div className='admin-foto-preview' key={foto}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={foto} alt={`Vista previa ${index + 1}`} />
-
                         <button
                           type='button'
                           aria-label='Quitar fotografía nueva'
@@ -931,18 +1270,280 @@ export default function AdminPage () {
               </section>
 
               <section className='admin-formulario-seccion'>
-                <h3>Colores, talles y stock</h3>
-
+                <h3>Colores, talles y combinaciones</h3>
                 <p>
-                  Cada fila representa una combinación concreta. Por ejemplo:
-                  negro, talle XL, stock 5.
+                  Agregá cada color y cada talle por separado. Después creá
+                  solamente las combinaciones que realmente tenga esta prenda.
                 </p>
+
+                {variantesFormulario.some(variante =>
+                  /[,;\n]/.test(variante.talle)
+                ) && (
+                  <div className='admin-formulario-mensaje' role='status'>
+                    Esta prenda conserva una variante antigua con varios talles
+                    agrupados. Creá primero las combinaciones individuales y
+                    asigná sus cantidades. Después podés quitar la variante
+                    agrupada. No se distribuye el stock automáticamente.
+                  </div>
+                )}
+
+                <div className='admin-gestor-opciones'>
+                  <div className='admin-gestor-bloque'>
+                    <h4>1. Colores disponibles</h4>
+
+                    <div className='admin-colores-rapidos'>
+                      {coloresPredeterminados.map(color => {
+                        const colorAgregado = coloresFormulario.find(
+                          item =>
+                            item.nombre.toLocaleLowerCase() ===
+                            color.nombre.toLocaleLowerCase()
+                        )
+
+                        const seleccionado =
+                          colorCombinacion.toLocaleLowerCase() ===
+                          color.nombre.toLocaleLowerCase()
+
+                        return (
+                          <button
+                            key={color.nombre}
+                            type='button'
+                            className={`admin-color-rapido ${
+                              seleccionado ? 'seleccionado' : ''
+                            }`}
+                            onClick={() =>
+                              seleccionarColorPredeterminado(color)
+                            }
+                          >
+                            <span
+                              className='admin-color-rapido-muestra'
+                              style={{ backgroundColor: color.codigo }}
+                            />
+
+                            <span className='admin-color-rapido-nombre'>
+                              {color.nombre}
+                            </span>
+
+                            {colorAgregado && (
+                              <span className='admin-color-rapido-check'>
+                                ✓
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <div className='admin-color-personalizado'>
+                      <h4>Agregar un color personalizado</h4>
+
+                      <div className='admin-gestor-entrada'>
+                        <label>
+                          <span>Nombre del color</span>
+                          <input
+                            value={nuevoColor}
+                            onChange={event =>
+                              setNuevoColor(event.target.value)
+                            }
+                            placeholder='Ej.: Azul petróleo'
+                          />
+                        </label>
+
+                        <label>
+                          <span>Muestra</span>
+                          <input
+                            type='color'
+                            value={nuevoCodigoColor}
+                            onChange={event =>
+                              setNuevoCodigoColor(event.target.value)
+                            }
+                            aria-label='Elegir muestra de color'
+                          />
+                        </label>
+
+                        <button
+                          type='button'
+                          className='admin-boton-secundario'
+                          onClick={agregarColorFormulario}
+                        >
+                          + Agregar color personalizado
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className='admin-opciones-chips'>
+                      {coloresFormulario.map(color => (
+                        <div className='admin-opcion-chip' key={color.nombre}>
+                          <span
+                            className='admin-color-muestra'
+                            style={{ backgroundColor: color.codigo }}
+                            aria-label={color.nombre}
+                          />
+                          <span>{color.nombre}</span>
+
+                          <input
+                            className='admin-color-chip-picker'
+                            type='color'
+                            value={color.codigo}
+                            onChange={event =>
+                              actualizarColorCodigo(
+                                color.nombre,
+                                event.target.value
+                              )
+                            }
+                            aria-label={`Cambiar muestra de ${color.nombre}`}
+                          />
+
+                          <button
+                            type='button'
+                            className='admin-chip-quitar'
+                            onClick={() => quitarColorFormulario(color.nombre)}
+                            aria-label={`Quitar color ${color.nombre}`}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className='admin-gestor-bloque'>
+                    <h4>2. Talles disponibles</h4>
+
+                    <div className='admin-gestor-entrada admin-gestor-talles'>
+                      <label>
+                        <span>Uno o varios talles</span>
+                        <input
+                          value={nuevoTalle}
+                          onChange={event => setNuevoTalle(event.target.value)}
+                          placeholder='Ej.: 1, 2, 3 o S, M, L'
+                          onKeyDown={event => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              agregarTalleFormulario()
+                            }
+                          }}
+                        />
+                      </label>
+
+                      <button
+                        type='button'
+                        className='admin-boton-secundario'
+                        onClick={agregarTalleFormulario}
+                      >
+                        + Agregar talle
+                      </button>
+                    </div>
+
+                    <p className='admin-ayuda-opciones'>
+                      Separá los talles con comas, punto y coma o saltos de
+                      línea. Cada talle será una opción independiente.
+                    </p>
+
+                    <div className='admin-opciones-chips'>
+                      {tallesFormulario.map(talle => (
+                        <div
+                          className='admin-opcion-chip admin-talle-chip'
+                          key={talle}
+                        >
+                          <strong>{talle}</strong>
+                          <button
+                            type='button'
+                            className='admin-chip-quitar'
+                            onClick={() => quitarTalleFormulario(talle)}
+                            aria-label={`Quitar talle ${talle}`}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className='admin-gestor-bloque'>
+                    <h4>3. Crear una combinación</h4>
+                    <p>
+                      Seleccioná el color y el talle de una combinación que
+                      exista físicamente. No se crearán automáticamente todas
+                      las combinaciones posibles.
+                    </p>
+
+                    <div className='admin-combinacion-controles'>
+                      <label>
+                        <span>Color</span>
+                        <select
+                          value={colorCombinacion}
+                          onChange={event =>
+                            setColorCombinacion(event.target.value)
+                          }
+                        >
+                          <option value=''>Elegí un color</option>
+                          {coloresFormulario.map(color => (
+                            <option key={color.nombre} value={color.nombre}>
+                              {color.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <div className='admin-talles-multiseleccion'>
+                        <span className='admin-talles-etiqueta'>
+                          Talles (podés elegir varios)
+                        </span>
+
+                        <div className='admin-opciones-chips'>
+                          {tallesFormulario.map(talle => (
+                            <label
+                              key={talle}
+                              className={`admin-talle-opcion ${
+                                tallesCombinacion.includes(talle)
+                                  ? 'seleccionado'
+                                  : ''
+                              }`}
+                            >
+                              <input
+                                type='checkbox'
+                                checked={tallesCombinacion.includes(talle)}
+                                onChange={event => {
+                                  const seleccionado = event.target.checked
+
+                                  setTallesCombinacion(actuales =>
+                                    seleccionado
+                                      ? actuales.includes(talle)
+                                        ? actuales
+                                        : [...actuales, talle]
+                                      : actuales.filter(item => item !== talle)
+                                  )
+                                }}
+                              />
+                              <span>{talle}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button
+                        type='button'
+                        className='admin-boton-principal'
+                        disabled={
+                          !colorCombinacion || tallesCombinacion.length === 0
+                        }
+                        onClick={agregarCombinacion}
+                      >
+                        + Agregar talles seleccionados
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <h4 className='admin-subtitulo-combinaciones'>
+                  Combinaciones y stock
+                </h4>
 
                 {variantesFormulario.length === 0 ? (
                   <div className='admin-sin-variantes'>
                     <p>
-                      Todavía no agregaste variantes. Podés guardar la prenda
-                      sin variantes y completar estos datos más adelante.
+                      Todavía no agregaste combinaciones. Primero agregá colores
+                      y talles, y después seleccioná cada combinación real.
                     </p>
                   </div>
                 ) : (
@@ -950,61 +1551,29 @@ export default function AdminPage () {
                     {variantesFormulario.map((variante, indice) => (
                       <div className='admin-variante-fila' key={variante.id}>
                         <div className='admin-variante-numero'>
-                          Variante {indice + 1}
+                          Combinación {indice + 1}
+                        </div>
+
+                        <div className='admin-variante-dato'>
+                          <span>Color</span>
+                          <div className='admin-variante-color-resumen'>
+                            <span
+                              className='admin-color-muestra'
+                              style={{
+                                backgroundColor: variante.codigoColor
+                              }}
+                            />
+                            <strong>{variante.color}</strong>
+                          </div>
                         </div>
 
                         <label>
-                          <span>Color</span>
-
-                          <input
-                            value={variante.color}
-                            onChange={event =>
-                              actualizarVariante(
-                                variante.id,
-                                'color',
-                                event.target.value
-                              )
-                            }
-                            placeholder='Ej.: Negro'
-                          />
-                        </label>
-
-                        <label>
-                          <span>Muestra de color</span>
-
-                          <input
-                            type='color'
-                            value={variante.codigoColor}
-                            onChange={event =>
-                              actualizarVariante(
-                                variante.id,
-                                'codigoColor',
-                                event.target.value
-                              )
-                            }
-                            aria-label='Elegir código visual del color'
-                          />
-                        </label>
-
-                        <label>
                           <span>Talle</span>
-
-                          <input
-                            value={variante.talle}
-                            onChange={event =>
-                              actualizarVariante(
-                                variante.id,
-                                'talle',
-                                event.target.value
-                              )
-                            }
-                            placeholder='Ej.: S, XL, 42'
-                          />
+                          <input value={variante.talle} readOnly />
                         </label>
 
                         <label>
                           <span>Stock</span>
-
                           <input
                             type='number'
                             min='0'
@@ -1022,7 +1591,6 @@ export default function AdminPage () {
 
                         <label>
                           <span>Precio particular (opcional)</span>
-
                           <input
                             type='number'
                             min='0'
@@ -1044,25 +1612,16 @@ export default function AdminPage () {
                           className='admin-boton-eliminar'
                           onClick={() => quitarVariante(variante.id)}
                         >
-                          × Quitar variante
+                          × Quitar combinación
                         </button>
                       </div>
                     ))}
                   </div>
                 )}
-
-                <button
-                  type='button'
-                  className='admin-boton-secundario'
-                  onClick={agregarVariante}
-                >
-                  + Agregar color, talle y stock
-                </button>
               </section>
 
               <section className='admin-formulario-seccion'>
                 <h3>Publicación</h3>
-
                 <p>
                   Los borradores no son visibles para los clientes. Podés
                   publicar la prenda ahora o guardarla para más adelante.
@@ -1070,7 +1629,6 @@ export default function AdminPage () {
 
                 <label>
                   <span>Estado al guardar</span>
-
                   <select
                     value={estadoFormulario}
                     onChange={event =>

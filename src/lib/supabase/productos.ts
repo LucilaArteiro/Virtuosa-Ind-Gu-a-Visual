@@ -34,13 +34,21 @@ type ColorEntrada = {
   codigo: string
 }
 
-function crearUrlFoto (storagePath: string) {
+/* =========================================================
+   FOTOGRAFÍAS
+   ========================================================= */
+
+function crearUrlFoto (storagePath: string): string {
   const supabase = createClient()
 
   const { data } = supabase.storage.from('prendas').getPublicUrl(storagePath)
 
   return data.publicUrl
 }
+
+/* =========================================================
+   OBTENER PRODUCTOS
+   ========================================================= */
 
 export async function obtenerProductosSupabase (): Promise<Producto[]> {
   const supabase = createClient()
@@ -66,6 +74,7 @@ export async function obtenerProductosSupabase (): Promise<Producto[]> {
 
   const [resultadoVariantes, resultadoFotos] = await Promise.all([
     supabase.from('product_variants').select('*').in('product_id', ids),
+
     supabase
       .from('product_images')
       .select('*')
@@ -104,6 +113,7 @@ export async function obtenerProductosSupabase (): Promise<Producto[]> {
       .map(variante => ({
         id: variante.id,
         color: variante.color_nombre,
+        colorCodigo: variante.color_codigo,
         talle: variante.talle,
         stock: variante.stock ?? 0,
         ...(variante.precio !== null ? { precio: Number(variante.precio) } : {})
@@ -115,12 +125,18 @@ export async function obtenerProductosSupabase (): Promise<Producto[]> {
   }))
 }
 
+/* =========================================================
+   GUARDAR O ACTUALIZAR UNA PRENDA
+   ========================================================= */
+
 export async function guardarProductoSupabase (
   producto: Producto,
   archivos: File[],
   colores: ColorEntrada[]
 ): Promise<void> {
   const supabase = createClient()
+
+  /* 1. Guardar los datos principales de la prenda. */
 
   const { error: errorProducto } = await supabase.from('products').upsert({
     id: producto.id,
@@ -135,86 +151,248 @@ export async function guardarProductoSupabase (
     throw new Error(`No se pudo guardar la prenda: ${errorProducto.message}`)
   }
 
-  // Las variantes se guardan como combinaciones independientes
-  // de color y talle.
-  const { error: errorEliminarVariantes } = await supabase
-    .from('product_variants')
-    .delete()
-    .eq('product_id', producto.id)
+  /* 2. Consultar las variantes que ya existen. */
 
-  if (errorEliminarVariantes) {
+  const { data: variantesAnteriores, error: errorLeerVariantes } =
+    await supabase
+      .from('product_variants')
+      .select('id')
+      .eq('product_id', producto.id)
+
+  if (errorLeerVariantes) {
     throw new Error(
-      `No se pudieron actualizar las variantes: ${errorEliminarVariantes.message}`
+      `No se pudieron consultar las variantes anteriores: ${errorLeerVariantes.message}`
     )
   }
 
-  if (producto.variantes.length > 0) {
-    const filasVariantes = producto.variantes.map(variante => {
-      const color = colores.find(
-        item => item.nombre.toLowerCase() === variante.color.toLowerCase()
-      )
+  /* 3. Actualizar o insertar las variantes.
+     Cada combinación de color y talle mantiene su propio stock. */
 
-      return {
-        id: variante.id,
-        product_id: producto.id,
-        color_nombre: variante.color,
-        color_codigo: color?.codigo ?? '#929292',
-        talle: variante.talle,
-        stock: variante.stock,
-        precio: variante.precio ?? null
-      }
-    })
+  const filasVariantes = producto.variantes.map(variante => {
+    const color = colores.find(
+      item =>
+        item.nombre.toLocaleLowerCase() === variante.color.toLocaleLowerCase()
+    )
 
-    const { error: errorInsertarVariantes } = await supabase
+    return {
+      id: variante.id,
+      product_id: producto.id,
+      color_nombre: variante.color,
+      color_codigo: variante.colorCodigo ?? color?.codigo ?? '#929292',
+      talle: variante.talle,
+      stock: variante.stock,
+      precio: variante.precio ?? null
+    }
+  })
+
+  if (filasVariantes.length > 0) {
+    const { error: errorGuardarVariantes } = await supabase
       .from('product_variants')
-      .insert(filasVariantes)
+      .upsert(filasVariantes)
 
-    if (errorInsertarVariantes) {
+    if (errorGuardarVariantes) {
       throw new Error(
-        `No se pudieron guardar las variantes: ${errorInsertarVariantes.message}`
+        `No se pudieron guardar las variantes: ${errorGuardarVariantes.message}`
       )
     }
   }
 
-  // Las fotografías se suben al bucket "prendas" y luego
-  // se guarda su ubicación en la tabla product_images.
-  for (let indice = 0; indice < archivos.length; indice++) {
-    const archivo = archivos[indice]
+  /* 4. Eliminar únicamente las variantes quitadas del formulario.
+     Las combinaciones conservadas no se eliminan previamente. */
 
-    const nombreSeguro = archivo.name
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-zA-Z0-9._-]/g, '-')
+  const idsActuales = new Set(producto.variantes.map(variante => variante.id))
 
-    const ruta = `${producto.id}/${crypto.randomUUID()}-${nombreSeguro}`
+  const idsParaEliminar = (variantesAnteriores ?? [])
+    .filter(variante => !idsActuales.has(variante.id))
+    .map(variante => variante.id)
 
-    const { error: errorSubida } = await supabase.storage
-      .from('prendas')
-      .upload(ruta, archivo, {
-        contentType: archivo.type,
-        upsert: false
-      })
+  if (idsParaEliminar.length > 0) {
+    const { error: errorEliminarVariantes } = await supabase
+      .from('product_variants')
+      .delete()
+      .eq('product_id', producto.id)
+      .in('id', idsParaEliminar)
 
-    if (errorSubida) {
+    if (errorEliminarVariantes) {
       throw new Error(
-        `No se pudo subir la fotografía "${archivo.name}": ${errorSubida.message}`
+        `Las variantes se guardaron, pero no se pudieron quitar las combinaciones eliminadas: ${errorEliminarVariantes.message}`
+      )
+    }
+  }
+
+  /* 5. Consultar las fotografías registradas anteriormente. */
+
+  const { data: fotosAnteriores, error: errorLeerFotos } = await supabase
+    .from('product_images')
+    .select('*')
+    .eq('product_id', producto.id)
+    .order('orden', { ascending: true })
+
+  if (errorLeerFotos) {
+    throw new Error(
+      `No se pudieron consultar las fotografías anteriores: ${errorLeerFotos.message}`
+    )
+  }
+
+  const fotosExistentes = (fotosAnteriores ?? []) as FotoDB[]
+
+  /* Identificar qué fotografías guardadas se conservan. */
+
+  const fotosConservar: FotoDB[] = []
+
+  for (const url of producto.fotos ?? []) {
+    const foto = fotosExistentes.find(
+      item => crearUrlFoto(item.storage_path) === url
+    )
+
+    if (foto && !fotosConservar.some(item => item.id === foto.id)) {
+      fotosConservar.push(foto)
+    }
+  }
+
+  const idsFotosConservar = new Set(fotosConservar.map(foto => foto.id))
+
+  const fotosParaEliminar = fotosExistentes.filter(
+    foto => !idsFotosConservar.has(foto.id)
+  )
+
+  /* 6. Subir las fotografías nuevas. */
+
+  const nuevasFotos: { storage_path: string }[] = []
+
+  try {
+    for (const archivo of archivos) {
+      const nombreSeguro = archivo.name
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9._-]/g, '-')
+
+      const ruta = `${producto.id}/${crypto.randomUUID()}-${nombreSeguro}`
+
+      const { error: errorSubida } = await supabase.storage
+        .from('prendas')
+        .upload(ruta, archivo, {
+          contentType: archivo.type,
+          upsert: false
+        })
+
+      if (errorSubida) {
+        throw new Error(
+          `No se pudo subir la fotografía "${archivo.name}": ${errorSubida.message}`
+        )
+      }
+
+      nuevasFotos.push({ storage_path: ruta })
+    }
+  } catch (error) {
+    // Intentar limpiar los archivos que se hayan subido en esta operación.
+    const rutasSubidas = nuevasFotos.map(foto => foto.storage_path)
+
+    if (rutasSubidas.length > 0) {
+      const { error: errorLimpieza } = await supabase.storage
+        .from('prendas')
+        .remove(rutasSubidas)
+
+      if (errorLimpieza) {
+        console.error(
+          'No se pudieron limpiar algunas fotos nuevas:',
+          errorLimpieza.message
+        )
+      }
+    }
+
+    throw error
+  }
+
+  /* 7. Registrar las fotografías nuevas en la base de datos. */
+
+  if (nuevasFotos.length > 0) {
+    const filasFotos = nuevasFotos.map((foto, indice) => ({
+      product_id: producto.id,
+      storage_path: foto.storage_path,
+      texto_alternativo: producto.nombre,
+      orden: fotosConservar.length + indice
+    }))
+
+    const { error: errorRegistrarFotos } = await supabase
+      .from('product_images')
+      .insert(filasFotos)
+
+    if (errorRegistrarFotos) {
+      const rutasSubidas = nuevasFotos.map(foto => foto.storage_path)
+
+      const { error: errorLimpieza } = await supabase.storage
+        .from('prendas')
+        .remove(rutasSubidas)
+
+      if (errorLimpieza) {
+        console.error(
+          'No se pudieron limpiar algunas fotos nuevas:',
+          errorLimpieza.message
+        )
+      }
+
+      throw new Error(
+        `Las fotos se subieron, pero no se pudieron registrar: ${errorRegistrarFotos.message}`
+      )
+    }
+  }
+
+  /* 8. Quitar las referencias de las fotos eliminadas del formulario. */
+
+  if (fotosParaEliminar.length > 0) {
+    const idsFotosParaEliminar = fotosParaEliminar.map(foto => foto.id)
+
+    const { error: errorEliminarFotos } = await supabase
+      .from('product_images')
+      .delete()
+      .eq('product_id', producto.id)
+      .in('id', idsFotosParaEliminar)
+
+    if (errorEliminarFotos) {
+      throw new Error(
+        `La prenda se guardó, pero no se pudieron quitar algunas fotografías: ${errorEliminarFotos.message}`
       )
     }
 
-    const { error: errorFoto } = await supabase.from('product_images').insert({
-      product_id: producto.id,
-      storage_path: ruta,
-      texto_alternativo: producto.nombre,
-      orden: indice
-    })
+    /* Borrar también los archivos del almacenamiento. */
 
-    if (errorFoto) {
+    const rutasParaEliminar = fotosParaEliminar.map(foto => foto.storage_path)
+
+    const { error: errorEliminarArchivos } = await supabase.storage
+      .from('prendas')
+      .remove(rutasParaEliminar)
+
+    if (errorEliminarArchivos) {
+      console.error(
+        'Se quitaron las referencias de algunas fotos, pero quedaron archivos en Storage:',
+        errorEliminarArchivos.message
+      )
+    }
+  }
+
+  /* 9. Actualizar el orden de las fotografías conservadas. */
+
+  for (let indice = 0; indice < fotosConservar.length; indice++) {
+    const foto = fotosConservar[indice]
+
+    const { error: errorOrden } = await supabase
+      .from('product_images')
+      .update({ orden: indice })
+      .eq('id', foto.id)
+      .eq('product_id', producto.id)
+
+    if (errorOrden) {
       throw new Error(
-        `La fotografía se subió, pero no se pudo registrar: ${errorFoto.message}`
+        `Las fotos se guardaron, pero no se pudo actualizar su orden: ${errorOrden.message}`
       )
     }
   }
 }
+
+/* =========================================================
+   ACTUALIZAR EL ESTADO DE UNA PRENDA
+   ========================================================= */
 
 export async function actualizarEstadoSupabase (
   id: string,
@@ -231,10 +409,16 @@ export async function actualizarEstadoSupabase (
     throw new Error(`No se pudo actualizar el estado: ${error.message}`)
   }
 }
+
+/* =========================================================
+   ELIMINAR UNA PRENDA
+   ========================================================= */
+
 export async function eliminarProductoSupabase (id: string): Promise<void> {
   const supabase = createClient()
 
-  // Recuperar las rutas de las fotografías antes de eliminar el producto.
+  /* 1. Recuperar las rutas de las fotos antes de borrar la prenda. */
+
   const { data: fotos, error: errorFotos } = await supabase
     .from('product_images')
     .select('storage_path')
@@ -246,8 +430,10 @@ export async function eliminarProductoSupabase (id: string): Promise<void> {
     )
   }
 
-  // Eliminar el producto. Las variantes y referencias a sus fotos
-  // se eliminan automáticamente por las relaciones de la base de datos.
+  /* 2. Eliminar el producto.
+     Las variantes y referencias a sus fotos dependen de las relaciones
+     configuradas en la base de datos. */
+
   const { error: errorProducto } = await supabase
     .from('products')
     .delete()
@@ -257,7 +443,8 @@ export async function eliminarProductoSupabase (id: string): Promise<void> {
     throw new Error(`No se pudo eliminar la prenda: ${errorProducto.message}`)
   }
 
-  // Borrar también los archivos de imagen del almacenamiento.
+  /* 3. Eliminar los archivos de imagen del almacenamiento. */
+
   const rutas = (fotos ?? []).map(foto => foto.storage_path)
 
   if (rutas.length > 0) {
